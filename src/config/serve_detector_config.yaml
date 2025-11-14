@@ -1,0 +1,71 @@
+# Serve Detector Configuration File
+
+# API Endpoints Configuration
+# Define available API endpoints that can be used to access models
+api_endpoints:
+  dashscope:
+    type: "dashscope"  # SDK type: "dashscope" or "openai"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key_env: "DASHSCOPE_API_KEY"  # Environment variable name for API key
+
+  local_vllm:
+    type: "openai"  # OpenAI-compatible API
+    base_url: "http://localhost:8000/v1"
+    api_key_env: "OPENAI_API_KEY"
+
+  openai:
+    type: "openai"
+    base_url: "https://api.openai.com/v1"
+    api_key_env: "OPENAI_API_KEY"
+
+# Models Configuration
+# Define available models and their API endpoints
+models:
+  qwen-vl-max:
+    name: "qwen-vl-max-latest"  # Model name as recognized by the API
+    api: "dashscope"  # References api_endpoints key
+    description: "Qwen VL Max model via DashScope"
+
+  qwen-vl-plus:
+    name: "qwen3-vl-plus"
+    api: "dashscope"
+    description: "Qwen VL Plus model via DashScope"
+
+  qwen3-vl-8b-local:
+    name: "Qwen/Qwen3-VL-8B-Instruct"
+    api: "local_vllm"
+    description: "Local Qwen VL model via vLLM"
+
+  gpt4-vision:
+    name: "gpt-4-vision-preview"
+    api: "openai"
+    description: "GPT-4 Vision via OpenAI API"
+
+# Active Model Selection
+active_model: "qwen3-vl-8b-local"
+
+# Video Frame Extraction
+video_frames:
+  max_frames: 8  # Maximum number of frames to extract per video segment
+  frame_size: [1024, 1024]  # Frame size [width, height]
+
+# Inference Parameters
+inference:
+  batch_size: 4  # Number of segments to process in parallel
+  max_new_tokens: 50  # Maximum number of tokens to generate
+  temperature: 0.1  # Temperature for sampling (lower = more deterministic)
+  top_p: 0.8  # Top-p sampling parameter
+  do_sample: false  # Whether to use sampling
+
+# Few-shot Learning
+few_shot:
+  enable: true # Enable few-shot learning mode
+  # When enabled, examples will be loaded from the examples_dir
+  # configured in prompts_config.py (FEW_SHOT_CONFIG)
+
+# Video Segmentation (for serve detection)
+video_segmentation:
+  segment_duration: 2.0  # Duration of each video segment in seconds
+  overlap_duration: 1.0  # Overlap between consecutive segments in seconds
+  max_segments: null     # Maximum number of segments to process (null = process all segments)
+

@@ -1,0 +1,44 @@
+{
+  "examples": [
+    {
+      "video": "data/videos/test_2.mp4",
+      "category": "serve",
+      "label": "has_serve",
+      "start_time": 0,
+      "duration": 2.0,
+      "num_frames": 8
+    },
+    {
+      "video": "data/videos/test_2.mp4",
+      "category": "serve",
+      "label": "no_serve",
+      "start_time": 2.0,
+      "duration": 2,
+      "num_frames": 8
+    },
+    {
+      "video": "data/videos/test_2.mp4",
+      "category": "serve",
+      "label": "no_serve",
+      "start_time": 4.0,
+      "duration": 2.0,
+      "num_frames": 8
+    },
+    {
+      "video": "data/videos/test_2.mp4",
+      "category": "serve",
+      "label": "no_serve",
+      "start_time": 8.0,
+      "duration": 2.0,
+      "num_frames": 8
+    },
+    {
+      "video": "data/videos/test_2.mp4",
+      "category": "serve",
+      "label": "no_serve",
+      "start_time": 10,
+      "duration": 2.0,
+      "num_frames": 12
+    }
+  ]
+}

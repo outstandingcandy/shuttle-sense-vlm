@@ -1,0 +1,7 @@
+video,category,label,start_time,duration,num_frames
+data/videos/match1.mp4,serve,has_serve,10.5,2.0,8
+data/videos/match1.mp4,serve,has_serve,45.2,2.5,8
+data/videos/match2.mp4,serve,no_serve,5.0,2.0,8
+data/videos/match2.mp4,serve,no_serve,30.0,2.0,8
+data/videos/rally_clips.mp4,rally,has_rally,0,3.0,12
+data/videos/rally_clips.mp4,rally,no_rally,60.0,2.0,8

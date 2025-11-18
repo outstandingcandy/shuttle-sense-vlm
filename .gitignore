@@ -59,7 +59,7 @@ coverage.xml
 .pytest_cache/
 
 # Data & Models
-data/
+data/videos
 *.mp4
 *.avi
 *.mov

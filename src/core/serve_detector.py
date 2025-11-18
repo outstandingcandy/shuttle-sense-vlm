@@ -20,22 +20,36 @@ from dashscope import MultiModalConversation
 from core.few_shot_manager import MessageManager
 from utils.response_parser import ResponseParser
 from utils.video_processor import extract_frames_from_video
-from config.prompts_config import SERVE_PROMPTS, FEW_SHOT_CONFIG, FEW_SHOT_EXAMPLES, FEW_SHOT_SYSTEM_PROMPTS, FEW_SHOT_RESPONSES
+from config.prompts_config import SERVE_PROMPTS, FEW_SHOT_CONFIG, FEW_SHOT_SYSTEM_PROMPTS
+from config.annotations_loader import AnnotationConfigLoader
 
 logger = logging.getLogger(__name__)
 
 class ServeDetector:
     """Serve Detector"""
 
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: Optional[str] = None, annotation_config_path: Optional[str] = None):
         """
         Initialize Serve Detector.
 
         Args:
             config_path: Path to YAML configuration file. If not provided, uses default config file
                         in src/config/serve_detector_config.yaml
+            annotation_config_path: Path to annotation JSON file for dynamic prompt loading.
+                                  If provided, prompts will be loaded from this file instead of
+                                  hardcoded prompts_config.py. Defaults to docs/annotations_example.json
         """
-        # Load serve detection prompts from config file
+        # Load configuration: prompts from annotation config or fallback to hardcoded
+        self.annotation_config = None
+        if annotation_config_path:
+            try:
+                self.annotation_config = AnnotationConfigLoader(annotation_config_path)
+                logger.info(f"Using annotation config for prompts from: {annotation_config_path}")
+            except Exception as e:
+                logger.warning(f"Failed to load annotation config: {str(e)}. Falling back to hardcoded prompts.")
+                self.annotation_config = None
+
+        # Load serve detection prompts (from annotation config or fallback to hardcoded)
         self.serve_questions = SERVE_PROMPTS
 
         # Load configuration from YAML file
@@ -290,8 +304,6 @@ class ServeDetector:
                     "response": "无法提取帧",
                     "success": False
                 } for segment in segments_batch]
-
-            # Get query text and system prompt
             query_text = self.serve_questions["has_serve"]
             system_prompt = FEW_SHOT_SYSTEM_PROMPTS.get("serve_detection")
 
@@ -299,21 +311,33 @@ class ServeDetector:
             messages_list = []
             if self.config["enable_few_shot"]:
                 # Few-shot mode: include examples
-                example_config = FEW_SHOT_EXAMPLES.get("serve_detection", {})
-                responses_config = FEW_SHOT_RESPONSES.get("serve_detection", {})
+                if not self.annotation_config:
+                    logger.error(
+                        "Few-shot mode enabled but no annotation config provided. "
+                        "Please provide an annotation_config_path to use ID-based examples."
+                    )
+                    return [{
+                        **segment,
+                        "has_serve": False,
+                        "response": "配置错误：未提供annotation config",
+                        "success": False
+                    } for segment in segments_batch]
+
+                # Get example IDs for task
+                task_name = "serve_detection"
+                example_ids = self.annotation_config.get_example_ids_for_task(
+                    task_name=task_name,
+                    num_examples=FEW_SHOT_CONFIG["num_examples"]
+                )
+
+                logger.info(f"Using few-shot examples: {example_ids}")
 
                 for frames in frame_batches:
                     messages = self.message_manager.create_messages(
                         frames=frames,
                         text=query_text,
                         system_prompt=system_prompt,
-                        example_category=example_config.get("category"),
-                        positive_label=example_config.get("positive_label"),
-                        positive_response=responses_config.get("positive"),
-                        negative_label=example_config.get("negative_label"),
-                        negative_response=responses_config.get("negative"),
-                        num_positive_examples=FEW_SHOT_CONFIG["num_positive_examples"],
-                        num_negative_examples=FEW_SHOT_CONFIG["num_negative_examples"],
+                        example_ids=example_ids
                     )
                     messages_list.append(messages)
             else:
@@ -453,10 +477,10 @@ class ServeDetector:
                     "temperature": self.config["temperature"],
                     "top_p": self.config["top_p"],
                 }
-                
+
                 try:
                     response = requests.post(
-                        f"{self.config["openai_api_base"]}/chat/completions",
+                        f"{self.config['openai_api_base']}/chat/completions",
                         headers={
                             "Authorization": f"Bearer {os.getenv('OPENAI_API_KEY')}",
                             "Content-Type": "application/json"

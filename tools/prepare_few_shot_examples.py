@@ -3,9 +3,13 @@
 Few-shot 示例准备工具
 用于从注释文件批量提取视频示例帧
 
-注释文件格式：
-- JSON: {"examples": [{"video": "...", "category": "...", "label": "...", "start_time": 0, "duration": 2.0, "num_frames": 8}, ...]}
-- CSV: video,category,label,start_time,duration,num_frames
+注释文件格式（ID-based structure）:
+- JSON: {"examples": [{"id": 1, "video": "...", "start_time": 0, "duration": 2.0, "num_frames": 8, "expected_response": "...", "query": "..."}, ...]}
+- CSV: id,video,start_time,duration,num_frames,expected_response,query
+
+⚠️  MIGRATION NOTE:
+The old category/label-based structure is deprecated. Use IDs for all new examples.
+Legacy fields (category, label) are kept for backward compatibility but are no longer required.
 """
 
 import sys
@@ -39,7 +43,8 @@ def parse_annotation_file(annotation_path: str) -> List[Dict[str, Any]]:
         annotation_path: 注释文件路径
 
     Returns:
-        示例列表，每个示例包含: video, category, label, start_time, duration, num_frames
+        示例列表，每个示例包含: id, video, start_time, duration, num_frames, expected_response, query
+        Legacy fields (category, label) are optional for backward compatibility
     """
     annotation_path = Path(annotation_path)
 
@@ -57,7 +62,7 @@ def parse_annotation_file(annotation_path: str) -> List[Dict[str, Any]]:
 
 
 def parse_json_annotation(json_path: Path) -> List[Dict[str, Any]]:
-    """解析JSON格式的注释文件"""
+    """解析JSON格式的注释文件（ID-based structure）"""
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -66,17 +71,31 @@ def parse_json_annotation(json_path: Path) -> List[Dict[str, Any]]:
             raise ValueError("JSON文件必须包含 'examples' 键")
 
         examples = []
+        seen_ids = set()
+
         for idx, example in enumerate(data['examples']):
-            # 验证必需字段
-            required_fields = ['video', 'category', 'label']
+            # Validate required fields for ID-based structure
+            required_fields = ['id', 'video']
             for field in required_fields:
                 if field not in example:
                     raise ValueError(f"示例 {idx} 缺少必需字段: {field}")
 
-            # 设置默认值
+            # Check for duplicate IDs
+            example_id = example['id']
+            if example_id in seen_ids:
+                raise ValueError(f"重复的示例 ID: {example_id}")
+            seen_ids.add(example_id)
+
+            # Validate ID type
+            if not isinstance(example_id, int):
+                raise ValueError(f"示例 {idx}: ID 必须是整数，当前类型: {type(example_id)}")
+
+            # Set default values
             example.setdefault('start_time', 0)
             example.setdefault('duration', None)
             example.setdefault('num_frames', 8)
+            example.setdefault('query', None)
+            example.setdefault('expected_response', None)
 
             examples.append(example)
 
@@ -88,27 +107,38 @@ def parse_json_annotation(json_path: Path) -> List[Dict[str, Any]]:
 
 
 def parse_csv_annotation(csv_path: Path) -> List[Dict[str, Any]]:
-    """解析CSV格式的注释文件"""
+    """解析CSV格式的注释文件（ID-based structure）"""
     try:
         examples = []
+        seen_ids = set()
+
         with open(csv_path, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
 
-            # 验证必需列
-            required_columns = {'video', 'category', 'label'}
+            # Validate required columns for ID-based structure
+            required_columns = {'id', 'video'}
             if not required_columns.issubset(reader.fieldnames):
                 missing = required_columns - set(reader.fieldnames)
                 raise ValueError(f"CSV文件缺少必需列: {missing}")
 
             for row_idx, row in enumerate(reader, start=2):  # Start at 2 (header is row 1)
                 try:
+                    example_id = int(row['id'])
+
+                    # Check for duplicate IDs
+                    if example_id in seen_ids:
+                        logger.warning(f"跳过CSV第{row_idx}行，重复的 ID: {example_id}")
+                        continue
+                    seen_ids.add(example_id)
+
                     example = {
+                        'id': example_id,
                         'video': row['video'],
-                        'category': row['category'],
-                        'label': row['label'],
                         'start_time': float(row.get('start_time', 0)),
                         'duration': float(row['duration']) if row.get('duration') else None,
-                        'num_frames': int(row.get('num_frames', 8))
+                        'num_frames': int(row.get('num_frames', 8)),
+                        'query': row.get('query'),
+                        'expected_response': row.get('expected_response')
                     }
                     examples.append(example)
                 except (ValueError, KeyError) as e:
@@ -124,20 +154,31 @@ def parse_csv_annotation(csv_path: Path) -> List[Dict[str, Any]]:
 
 def process_single_example(
     manager: MessageManager,
+    example_id: int,
     video: str,
-    category: str,
-    label: str,
+    query: str = None,
+    expected_response: str = None,
     start_time: float = 0,
     duration: float = None,
     num_frames: int = 8
 ) -> bool:
     """
-    处理单个示例提取
+    处理单个示例提取（ID-based structure）
+
+    Args:
+        manager: MessageManager instance
+        example_id: Unique example ID
+        video: Video path
+        query: Query text for this example (optional)
+        expected_response: Expected assistant response (optional)
+        start_time: Start time in seconds
+        duration: Duration in seconds
+        num_frames: Number of frames to extract
 
     Returns:
         True if successful, False otherwise
     """
-    logger.info(f"处理: {video} -> {category}/{label} (时间: {start_time:.1f}s, 帧数: {num_frames})")
+    logger.info(f"处理: ID {example_id} - {video} (时间: {start_time:.1f}s, 帧数: {num_frames})")
 
     # 检查视频文件是否存在
     if not os.path.exists(video):
@@ -147,8 +188,9 @@ def process_single_example(
     try:
         frames = manager.extract_example_frames(
             video_path=video,
-            category=category,
-            label=label,
+            example_id=example_id,
+            query=query,
+            expected_response=expected_response,
             num_frames=num_frames,
             start_time=start_time,
             duration=duration
@@ -168,7 +210,7 @@ def process_single_example(
 
 def process_batch(manager: MessageManager, examples: List[Dict[str, Any]]) -> Dict[str, int]:
     """
-    批量处理多个示例
+    批量处理多个示例（ID-based structure）
 
     Returns:
         处理统计信息 {"total": N, "success": M, "failed": K}
@@ -182,9 +224,10 @@ def process_batch(manager: MessageManager, examples: List[Dict[str, Any]]) -> Di
 
         success = process_single_example(
             manager=manager,
+            example_id=example['id'],
             video=example['video'],
-            category=example['category'],
-            label=example['label'],
+            query=example.get('query'),
+            expected_response=example.get('expected_response'),
             start_time=example.get('start_time', 0),
             duration=example.get('duration'),
             num_frames=example.get('num_frames', 8)
@@ -209,29 +252,6 @@ def print_summary(manager: MessageManager, stats: Dict[str, int] = None):
         logger.info(f"  成功: {stats['success']} 个")
         logger.info(f"  失败: {stats['failed']} 个")
         logger.info("=" * 60)
-
-    logger.info("\n📋 当前所有可用示例:")
-    available = manager.list_available_examples()
-
-    if not available:
-        logger.info("  (无)")
-        return
-
-    for category, labels in available.items():
-        logger.info(f"  {category}:")
-        for label in labels:
-            metadata = manager.get_example_metadata(category, label)
-            if metadata:
-                num_examples = metadata.get('num_examples', 0)
-                num_frames = metadata.get('num_frames', 0)
-                source_videos = metadata.get('source_videos', [])
-                # Create a summary of source videos
-                unique_sources = list(set(Path(v).name for v in source_videos))
-                sources_str = ', '.join(unique_sources[:3])  # Show first 3
-                if len(unique_sources) > 3:
-                    sources_str += f', ... (+{len(unique_sources) - 3} more)'
-                logger.info(f"    - {label}: {num_examples} examples, {num_frames} frames (sources: {sources_str})")
-
 
 def main():
     parser = argparse.ArgumentParser(

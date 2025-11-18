@@ -1,0 +1,70 @@
+{
+  "tasks": {
+    "serve_detection": {
+      "category": "serve",
+      "system_prompt": "你是一名专业的羽毛球动作识别专家。你的任务是分析羽毛球视频片段，判断其中是否包含发球动作。\n\n【发球定义】\n羽毛球发球是指发球员在发球区内，以一个连续向前的挥拍动作，用球拍击打羽毛球底部，使球飞过球网进入对方发球区的动作。\n\n【关键特征】\n1. 发球员在发球区内、身体相对静止\n2. 挥拍时球拍杆朝下、球在腰部以下\n3. 击球后羽毛球飞过球网，进入对方场地\n4. 发球时不能把球抛起\n\n【分析要求】\n- 仔细观察视频中的每一帧\n- 识别发球的准备、挥拍和击球动作\n- 基于典型特征做出准确判断"
+    }
+  },
+  "examples": [
+    {
+      "id": 1,
+      "video": "data/videos/test_2.mp4",
+      "start_time": 0,
+      "duration": 2.0,
+      "num_frames": 8,
+      "category": "serve",
+      "expected_response": "有发球动作，动作所在的时间区间[0, 8]",
+      "query": "这段羽毛球视频中是否包含发球动作？如果包含请给出发球动作所在的时间区间，如果不包含请回答没有发球动作"
+    },
+    {
+      "id": 2,
+      "video": "data/videos/test_2.mp4",
+      "start_time": 2.0,
+      "duration": 2,
+      "num_frames": 8,
+      "category": "serve",
+      "expected_response": "没有发球动作",
+      "query": "这段羽毛球视频中是否包含发球动作？如果包含请给出发球动作所在的时间区间，如果不包含请回答没有发球动作"
+    },
+    {
+      "id": 3,
+      "video": "data/videos/test_2.mp4",
+      "start_time": 4.0,
+      "duration": 2.0,
+      "num_frames": 8,
+      "category": "serve",
+      "expected_response": "没有发球动作",
+      "query": "这段羽毛球视频中是否包含发球动作？如果包含请给出发球动作所在的时间区间，如果不包含请回答没有发球动作"
+    },
+    {
+      "id": 4,
+      "video": "data/videos/test_2.mp4",
+      "start_time": 8.0,
+      "duration": 2.0,
+      "num_frames": 8,
+      "category": "serve",
+      "expected_response": "没有发球动作",
+      "query": "这段羽毛球视频中是否包含发球动作？如果包含请给出发球动作所在的时间区间，如果不包含请回答没有发球动作"
+    },
+    {
+      "id": 5,
+      "video": "data/videos/test_2.mp4",
+      "start_time": 10,
+      "duration": 2.0,
+      "num_frames": 8,
+      "category": "serve",
+      "expected_response": "没有发球动作",
+      "query": "这段羽毛球视频中是否包含发球动作？如果包含请给出发球动作所在的时间区间，如果不包含请回答没有发球动作"
+    },
+    {
+      "id": 6,
+      "video": "data/videos/test.mp4",
+      "start_time": 7,
+      "duration": 2.0,
+      "num_frames": 8,
+      "category": "serve",
+      "expected_response": "没有发球动作",
+      "query": "这段羽毛球视频中是否包含发球动作？如果包含请给出发球动作所在的时间区间，如果不包含请回答没有发球动作"
+    }
+  ]
+}

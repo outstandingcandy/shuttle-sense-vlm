@@ -6,7 +6,7 @@
 import logging
 import argparse
 import cv2
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from core.serve_detector import ServeDetector
 
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class BadmintonAnalyzer:
     """羽毛球分析器，支持Qwen3-VL"""
     
-    def __init__(self, base_model_name: str = "Qwen/Qwen3-VL-3B-Instruct", max_workers: int = None, use_vllm: bool = True, api_base: str = None, api_key: str = None, debug: bool = False):
+    def __init__(self, base_model_name: str = "Qwen/Qwen3-VL-3B-Instruct", max_workers: int = None, use_vllm: bool = True, api_base: str = None, api_key: str = None, debug: bool = False, annotation_config_path: Optional[str] = None):
         """
         初始化检测器
         
@@ -31,12 +31,13 @@ class BadmintonAnalyzer:
             api_base: API服务器地址 (例如: http://localhost:8000/v1)
             api_key: API密钥
             debug: 是否启用调试模式
+            annotation_config_path: 注释配置文件路径
         """
         self.debug = debug
-        self.serve_detector = ServeDetector()
+        self.serve_detector = ServeDetector(annotation_config_path=annotation_config_path)
     
     def detect_serves(self, 
-                      video_path: str) -> Dict[str, Any]:
+                      video_path: str, workers: int = 1) -> Dict[str, Any]:
         """
         基于发球检测来分割和检测羽毛球回合
         
@@ -55,7 +56,7 @@ class BadmintonAnalyzer:
         
         # 第一步：检测所有发球时刻
         logger.info("第一步：检测发球时刻...")
-        serve_segments = self.serve_detector.detect_all_serves(video_path=video_path)
+        serve_segments = self.serve_detector.detect_all_serves(video_path=video_path, workers=workers)
         logger.info(f"检测到 {len(serve_segments)} 个发球片段")
         
         # 构造结果
@@ -104,6 +105,7 @@ def main():
     parser.add_argument("--output-format", type=str, choices=["json", "csv", "txt"], default="json", help="输出格式")
     parser.add_argument("--verbose", action="store_true", help="详细输出")
     parser.add_argument("--debug", action="store_true", help="启用调试模式")
+    parser.add_argument("--annotation-config-path", type=str, default="data/annotations.json", help="注释配置文件路径，默认使用data/annotations.json")
     args = parser.parse_args()
     
     if args.verbose:
@@ -111,7 +113,8 @@ def main():
     
     try:
         analyzer = BadmintonAnalyzer(
-            debug=args.debug
+            debug=args.debug,
+            annotation_config_path=args.annotation_config_path
         )
         
         result = analyzer.detect_serves(video_path=args.video)

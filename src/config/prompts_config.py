@@ -1,11 +1,18 @@
 #!/usr/bin/env python3
 """
 提示词配置文件 - 统一管理所有模块的提示词
+
+⚠️  DEPRECATION NOTICE:
+This module is being replaced by the annotation-based configuration system.
+New code should use AnnotationConfigLoader (src/config/annotations_loader.py) to load
+prompts and configuration from annotation JSON files (e.g., docs/annotations_example.json).
+
+This file is kept for backward compatibility with existing code.
 """
 
 # 发球检测相关提示词
 SERVE_PROMPTS = {
-    "has_serve": """这段羽毛球视频中是否包含发球动作？请回答：是发球 或 不是发球。""",
+    "has_serve": """这段羽毛球视频中是否包含发球动作？如果包含请给出发球动作所在的时间区间，如果不包含请回答没有发球动作""",
     "serve_type": "描述这段羽毛球视频中的发球类型：高远球发球、平快球发球、网前球发球、反手发球或其他",
 }
 
@@ -59,8 +66,7 @@ def get_all_prompts() -> dict:
 FEW_SHOT_CONFIG = {
     "enabled": True,  # 是否启用few-shot
     "examples_dir": "few_shot_examples",  # 示例存储目录
-    "num_positive_examples": 1,  # 正例数量
-    "num_negative_examples": 4,  # 负例数量
+    "num_examples": 5,  # 示例数量
     "example_frames_per_video": 8,  # 每个示例视频提取的帧数
 }
 
@@ -82,32 +88,5 @@ FEW_SHOT_SYSTEM_PROMPTS = {
 - 仔细观察视频中的每一帧
 - 识别发球的准备、挥拍和击球动作
 - 基于典型特征做出准确判断""",
-    
-}
 
-# Few-shot 示例映射（定义哪些任务使用哪些示例）
-FEW_SHOT_EXAMPLES = {
-    "serve_detection": {
-        "category": "serve",
-        "positive_label": "has_serve",
-        "negative_label": "no_serve"
-    },
-    "rally_detection": {
-        "category": "rally",
-        "positive_label": "has_rally",
-        "negative_label": "no_rally"
-    }
 }
-
-# Few-shot 响应配置（示例的助手回复内容）
-FEW_SHOT_RESPONSES = {
-    "serve_detection": {
-        "positive": "是的，这段视频中有发球动作。",
-        "negative": "不，这段视频中没有发球动作。"
-    },
-    "rally_detection": {
-        "positive": "是的，这段视频中有正在进行的回合。",
-        "negative": "不，这段视频中没有正在进行的回合。"
-    }
-}
-

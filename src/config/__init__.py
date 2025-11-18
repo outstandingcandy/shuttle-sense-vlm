@@ -5,9 +5,7 @@ from .prompts_config import (
     GENERAL_PROMPTS,
     PROMPT_TEMPLATES,
     FEW_SHOT_CONFIG,
-    FEW_SHOT_EXAMPLES,
     FEW_SHOT_SYSTEM_PROMPTS,
-    FEW_SHOT_RESPONSES,
     get_serve_prompt,
     get_rally_prompt,
     get_general_prompt,
@@ -20,12 +18,9 @@ __all__ = [
     "GENERAL_PROMPTS",
     "PROMPT_TEMPLATES",
     "FEW_SHOT_CONFIG",
-    "FEW_SHOT_EXAMPLES",
     "FEW_SHOT_SYSTEM_PROMPTS",
-    "FEW_SHOT_RESPONSES",
     "get_serve_prompt",
     "get_rally_prompt",
     "get_general_prompt",
     "get_all_prompts"
 ]
-

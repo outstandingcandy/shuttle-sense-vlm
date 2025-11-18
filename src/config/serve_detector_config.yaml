@@ -31,6 +31,11 @@ models:
     api: "dashscope"
     description: "Qwen VL Plus model via DashScope"
 
+  qwen-vl-flash:
+    name: "qwen-vl-flash"
+    api: "dashscope"
+    description: "Qwen VL Flash model via DashScope"
+
   qwen3-vl-8b-local:
     name: "Qwen/Qwen3-VL-8B-Instruct"
     api: "local_vllm"
@@ -43,6 +48,7 @@ models:
 
 # Active Model Selection
 active_model: "qwen3-vl-8b-local"
+# active_model: "qwen-vl-flash"
 
 # Video Frame Extraction
 video_frames:

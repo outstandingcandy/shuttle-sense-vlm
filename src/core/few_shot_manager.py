@@ -7,6 +7,8 @@ import logging
 import os
 import json
 import uuid
+import re
+import shutil
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from PIL import Image
@@ -42,7 +44,7 @@ class MessageManager:
         os.makedirs(self.temp_dir, exist_ok=True)
 
         logger.info(f"MessageManager initialized - Examples dir: {examples_dir}, Temp dir: {temp_dir}")
-    
+
     def _save_frames_to_temp(self, frames: List[Image.Image], session_dir: str) -> str:
         """
         Save image frames to specified session directory and return file:// format paths.
@@ -67,8 +69,9 @@ class MessageManager:
     
     def extract_example_frames(self,
                               video_path: str,
-                              category: str,
-                              label: str,
+                              example_id: int,
+                              query: Optional[str] = None,
+                              expected_response: Optional[str] = None,
                               num_frames: int = 4,
                               start_time: float = 0,
                               duration: Optional[float] = None,
@@ -78,8 +81,9 @@ class MessageManager:
 
         Args:
             video_path: Path to reference video
-            category: Example category (e.g., "serve", "rally", "action")
-            label: Example label (e.g., "has_serve", "no_serve")
+            example_id: Unique example ID
+            query: Query text associated with this example (optional)
+            expected_response: Expected assistant response for this example (optional)
             num_frames: Number of frames to extract
             start_time: Start time in seconds
             duration: Duration in seconds
@@ -89,51 +93,35 @@ class MessageManager:
             List of extracted frames
         """
         frames = extract_frames_from_video(video_path, num_frames, start_time, duration, frame_size)
-        self._save_example_frames(frames, category, label, video_path)
-        logger.info(f"Extracted {len(frames)} frames from {video_path} as {category}/{label} examples")
+        self._save_example_frames(frames, example_id, video_path, query, expected_response)
+        logger.info(f"Extracted {len(frames)} frames from {video_path} as example ID {example_id}")
         return frames
     
     def _save_example_frames(self,
                             frames: List[Image.Image],
-                            category: str,
-                            label: str,
-                            source_video: str):
-        """Save example frames to disk in unique subdirectories."""
+                            example_id: int,
+                            source_video: str,
+                            query: Optional[str] = None,
+                            expected_response: Optional[str] = None):
+        """
+        Save example frames to disk using ID-based directory structure.
+
+        Args:
+            frames: List of PIL Image objects
+            example_id: Unique example ID
+            source_video: Source video path
+            query: Optional query text for this example
+            expected_response: Optional expected assistant response
+        """
         try:
-            # Extract video filename (without extension)
-            video_name = os.path.splitext(os.path.basename(source_video))[0]
-            # Clean filename to avoid filesystem issues
-            video_name = video_name.replace(' ', '_').replace('/', '_').replace('\\', '_')
+            # Create directory with ID
+            example_dir = os.path.join(self.examples_dir, str(example_id))
 
-            # Base directory for this category/label
-            base_dir = os.path.join(self.examples_dir, category, label)
-            os.makedirs(base_dir, exist_ok=True)
+            # Check if directory already exists
+            if os.path.exists(example_dir):
+                logger.warning(f"Example ID {example_id} already exists, overwriting")
+                shutil.rmtree(example_dir)
 
-            # Find next available sequence number for this video
-            existing_dirs = []
-            if os.path.exists(base_dir):
-                existing_dirs = [
-                    d for d in os.listdir(base_dir)
-                    if os.path.isdir(os.path.join(base_dir, d)) and d.startswith(f"{video_name}_")
-                ]
-
-            # Extract sequence numbers and find max
-            max_seq = 0
-            for dir_name in existing_dirs:
-                try:
-                    # Extract number from pattern: video_name_NNN
-                    # Use removeprefix to handle video names with underscores
-                    prefix = f"{video_name}_"
-                    if dir_name.startswith(prefix):
-                        seq_str = dir_name[len(prefix):]  # Remove prefix
-                        seq_num = int(seq_str)
-                        max_seq = max(max_seq, seq_num)
-                except (ValueError, IndexError):
-                    continue
-
-            # Create new subdirectory with next sequence number
-            next_seq = max_seq + 1
-            example_dir = os.path.join(base_dir, f"{video_name}_{next_seq:03d}")
             os.makedirs(example_dir, exist_ok=True)
 
             # Save frames
@@ -141,13 +129,12 @@ class MessageManager:
                 frame_path = os.path.join(example_dir, f"frame_{i:03d}.png")
                 frame.save(frame_path)
 
-            # Save metadata
+            # Save metadata with ID
             metadata = {
-                "category": category,
-                "label": label,
+                "id": example_id,
+                "query": query,
+                "expected_response": expected_response,
                 "source_video": source_video,
-                "video_name": video_name,
-                "sequence_number": next_seq,
                 "num_frames": len(frames),
                 "timestamp": datetime.now().isoformat()
             }
@@ -161,67 +148,105 @@ class MessageManager:
         except Exception as e:
             logger.error(f"Failed to save example frames: {str(e)}")
     
-    def load_examples(self, category: str, label: str) -> List[List[str]]:
-        """
-        Load saved example frames from all subdirectories.
 
-        Each subdirectory represents a separate example, and frames are kept separate.
+    def load_example_by_id(self, example_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Load a single example by its ID.
 
         Args:
-            category: Example category
-            label: Example label
+            example_id: Unique example ID
 
         Returns:
-            List of examples, where each example is a list of frame paths from one subdirectory.
-            e.g., [[frames from example_001], [frames from example_002], ...]
+            Dictionary with 'frames' and 'metadata', or None if not found
         """
-        cache_key = f"{category}/{label}"
+        cache_key = f"id_{example_id}"
 
         # Check cache
         if cache_key in self.examples_cache:
-            num_examples = len(self.examples_cache[cache_key])
-            total_frames = sum(len(ex) for ex in self.examples_cache[cache_key])
-            logger.info(f"Loaded {num_examples} {category}/{label} examples ({total_frames} total frames) from cache")
+            logger.debug(f"Loaded example ID {example_id} from cache")
             return self.examples_cache[cache_key]
 
         try:
-            base_dir = os.path.join(self.examples_dir, category, label)
+            example_dir = os.path.join(self.examples_dir, str(example_id))
 
-            if not os.path.exists(base_dir):
-                logger.warning(f"Example directory does not exist: {base_dir}")
-                return []
+            if not os.path.exists(example_dir):
+                logger.warning(f"Example ID {example_id} not found: {example_dir}")
+                return None
 
-            # Load frames from each subdirectory as a separate example
-            examples = []
-            subdirs = sorted([
-                d for d in os.listdir(base_dir)
-                if os.path.isdir(os.path.join(base_dir, d))
+            # Load frames
+            frame_files = sorted([
+                f for f in os.listdir(example_dir)
+                if f.endswith('.png') and f.startswith('frame_')
             ])
 
-            for subdir in subdirs:
-                subdir_path = os.path.join(base_dir, subdir)
-                frame_files = sorted([f for f in os.listdir(subdir_path) if f.endswith('.png')])
+            example_frames = []
+            for frame_file in frame_files:
+                frame_path = os.path.join(example_dir, frame_file)
+                example_frames.append(frame_path)
 
-                # Collect all frames for this example
-                example_frames = []
-                for frame_file in frame_files:
-                    frame_path = os.path.join(subdir_path, frame_file)
-                    example_frames.append(frame_path)
+            # Load metadata from centralized annotations.json
+            annotations_path = "data/annotations.json"
+            metadata = {}
+            if os.path.exists(annotations_path):
+                try:
+                    with open(annotations_path, "r", encoding="utf-8") as f:
+                        annotations_data = json.load(f)
+                        # Find the example with matching ID
+                        for example in annotations_data.get("examples", []):
+                            if example.get("id") == example_id:
+                                metadata = example
+                                break
+                        if not metadata:
+                            logger.warning(f"Example ID {example_id} not found in {annotations_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to load metadata from {annotations_path}: {str(e)}")
+            else:
+                logger.warning(f"Annotations file not found: {annotations_path}")
 
-                if example_frames:
-                    examples.append(example_frames)
+            if not example_frames:
+                logger.warning(f"No frames found for example ID {example_id}")
+                return None
 
-            # Cache the results
-            self.examples_cache[cache_key] = examples
+            example_data = {
+                'frames': example_frames,
+                'metadata': metadata
+            }
 
-            total_frames = sum(len(ex) for ex in examples)
-            logger.info(f"Loaded {len(examples)} {category}/{label} examples ({total_frames} total frames) from {len(subdirs)} subdirectories")
+            # Cache the result
+            self.examples_cache[cache_key] = example_data
 
-            return examples
+            logger.debug(f"Loaded example ID {example_id} with {len(example_frames)} frames")
+            return example_data
 
         except Exception as e:
-            logger.error(f"Failed to load example frames: {str(e)}")
-            return []
+            logger.error(f"Failed to load example ID {example_id}: {str(e)}")
+            return None
+
+    def load_examples_by_ids(self, example_ids: List[int]) -> List[Dict[str, Any]]:
+        """
+        Load multiple examples by their IDs.
+
+        Args:
+            example_ids: List of example IDs to load
+
+        Returns:
+            List of dictionaries, each containing:
+            - 'frames': List of frame file paths
+            - 'metadata': Metadata dictionary with ID, query, expected_response, etc.
+        """
+        examples = []
+
+        for example_id in example_ids:
+            example_data = self.load_example_by_id(example_id)
+            if example_data:
+                examples.append(example_data)
+            else:
+                logger.warning(f"Skipping missing example ID {example_id}")
+
+        total_frames = sum(len(ex['frames']) for ex in examples)
+        logger.info(f"Loaded {len(examples)}/{len(example_ids)} examples with {total_frames} total frames")
+
+        return examples
 
     def _generate_session_id(self,
                             video_path: Optional[str] = None,
@@ -270,19 +295,11 @@ class MessageManager:
                        video_path: Optional[str] = None,
                        start_time: Optional[float] = None,
                        end_time: Optional[float] = None,
-                       example_category: Optional[str] = None,
-                       positive_label: Optional[str] = None,
-                       positive_response: str = "Yes, there is the action in this video.",
-                       negative_label: Optional[str] = None,
-                       negative_response: str = "No, there is no action in this video.",
-                       num_positive_examples: int = 0,
-                       num_negative_examples: int = 0) -> List[Dict[str, Any]]:
+                       example_ids: Optional[List[int]] = None) -> List[Dict[str, Any]]:
         """
         Create messages for VLM models, supporting both zero-shot and few-shot scenarios.
 
-        When example_category and positive_label are provided with num_positive_examples > 0,
-        this creates few-shot messages with example demonstrations. Otherwise, it creates
-        simple zero-shot messages with just the query.
+        When no examples are provided, creates zero-shot messages.
 
         Args:
             frames: Query frames to analyze
@@ -292,13 +309,7 @@ class MessageManager:
             video_path: Video path for session ID generation
             start_time: Video segment start time (seconds)
             end_time: Video segment end time (seconds)
-            example_category: Example category for few-shot learning (optional)
-            positive_label: Positive example label for few-shot learning (optional)
-            positive_response: Assistant's reply for positive examples (few-shot mode)
-            negative_label: Negative example label for few-shot learning (optional)
-            negative_response: Assistant's reply for negative examples (few-shot mode)
-            num_positive_examples: Number of positive examples to include (0 for zero-shot)
-            num_negative_examples: Number of negative examples to include (0 for zero-shot)
+            example_ids: List of example IDs to use for few-shot learning
 
         Returns:
             Message list in multi-turn conversation format:
@@ -316,11 +327,7 @@ class MessageManager:
             messages = manager.create_messages(
                 frames=video_frames,
                 text="Is there a serve in this video?",
-                example_category="serve",
-                positive_label="has_serve",
-                num_positive_examples=2,
-                negative_label="no_serve",
-                num_negative_examples=1
+                example_ids=[1, 2, 3, 4, 5]
             )
         """
         # Generate session ID if not provided
@@ -339,75 +346,43 @@ class MessageManager:
                 "content": [{"type": "text", "text": system_prompt}]
             })
 
-        # Determine if this is few-shot mode
-        is_few_shot = (example_category and
-                      (num_positive_examples > 0 or num_negative_examples > 0))
+        # Add few-shot examples if provided
+        if example_ids:
+            logger.info(f"Creating few-shot messages with {len(example_ids)} examples")
 
-        if is_few_shot:
-            # Few-shot mode: Add example demonstrations
-            logger.info(f"Creating few-shot messages with category '{example_category}'")
+            examples = self.load_examples_by_ids(example_ids)
 
-            # Add positive examples
-            if num_positive_examples > 0:
-                positive_examples = self.load_examples(example_category, positive_label)
-                if positive_examples:
-                    # Select the requested number of examples (each example is already a complete set of frames)
-                    num_to_use = min(num_positive_examples, len(positive_examples))
+            for example_data in examples:
+                example_frames = example_data['frames']
+                example_metadata = example_data['metadata']
 
-                    for i in range(num_to_use):
-                        example_frames = positive_examples[i]
+                if example_frames:
+                    # Use query from metadata or default text
+                    example_query = example_metadata.get('query', text)
+                    expected_response = example_metadata.get(
+                        'expected_response',
+                        "Yes, there is the action in this video."
+                    )
 
-                        if example_frames:
-                            # User message: example frames + question
-                            user_content = []
-                            for frame in example_frames:
-                                image_url = f"file://{os.path.abspath(frame)}"
-                                user_content.append({"type": "image", "image": image_url})
-                            user_content.append({"type": "text", "text": text})
+                    # User message: example frames + question
+                    user_content = []
+                    for frame in example_frames:
+                        image_url = f"file://{os.path.abspath(frame)}"
+                        user_content.append({"type": "image", "image": image_url})
+                    user_content.append({"type": "text", "text": example_query})
 
-                            messages.append({
-                                "role": "user",
-                                "content": user_content
-                            })
+                    messages.append({
+                        "role": "user",
+                        "content": user_content
+                    })
 
-                            # Assistant reply: positive answer
-                            messages.append({
-                                "role": "assistant",
-                                "content": [{"type": "text", "text": positive_response}]
-                            })
+                    # Assistant reply: expected response from metadata
+                    messages.append({
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": expected_response}]
+                    })
 
-                    logger.info(f"Added {num_to_use} positive examples")
-
-            # Add negative examples
-            if negative_label and num_negative_examples > 0:
-                negative_examples = self.load_examples(example_category, negative_label)
-                if negative_examples:
-                    # Select the requested number of examples (each example is already a complete set of frames)
-                    num_to_use = min(num_negative_examples, len(negative_examples))
-
-                    for i in range(num_to_use):
-                        example_frames = negative_examples[i]
-
-                        if example_frames:
-                            # User message: example frames + question
-                            user_content = []
-                            for frame in example_frames:
-                                image_url = f"file://{os.path.abspath(frame)}"
-                                user_content.append({"type": "image", "image": image_url})
-                            user_content.append({"type": "text", "text": text})
-
-                            messages.append({
-                                "role": "user",
-                                "content": user_content
-                            })
-
-                            # Assistant reply: negative answer
-                            messages.append({
-                                "role": "assistant",
-                                "content": [{"type": "text", "text": negative_response}]
-                            })
-
-                    logger.info(f"Added {num_to_use} negative examples")
+            logger.info(f"Added {len(examples)} examples")
 
         # Add actual query (user's final question)
         query_content = []
@@ -420,75 +395,8 @@ class MessageManager:
             "content": query_content
         })
 
-        mode = "few-shot" if is_few_shot else "zero-shot"
+        mode = "few-shot" if example_ids else "zero-shot"
         logger.info(f"Created {mode} message with {len(frames)} query frames")
 
         return messages
-    
-    def list_available_examples(self) -> Dict[str, List[str]]:
-        """List all available examples."""
-        examples = {}
-
-        if not os.path.exists(self.examples_dir):
-            return examples
-
-        for category in os.listdir(self.examples_dir):
-            category_path = os.path.join(self.examples_dir, category)
-            if os.path.isdir(category_path):
-                labels = [label for label in os.listdir(category_path)
-                         if os.path.isdir(os.path.join(category_path, label))]
-                examples[category] = labels
-
-        return examples
-
-    def get_example_metadata(self, category: str, label: str) -> Optional[Dict[str, Any]]:
-        """
-        Get aggregated metadata for all examples under a category/label.
-
-        Returns a summary including all subdirectories (examples) and their metadata.
-        """
-        base_dir = os.path.join(self.examples_dir, category, label)
-
-        if not os.path.exists(base_dir):
-            return None
-
-        try:
-            subdirs = sorted([
-                d for d in os.listdir(base_dir)
-                if os.path.isdir(os.path.join(base_dir, d))
-            ])
-
-            if not subdirs:
-                return None
-
-            # Collect metadata from all subdirectories
-            all_metadata = []
-            total_frames = 0
-            source_videos = []
-
-            for subdir in subdirs:
-                metadata_path = os.path.join(base_dir, subdir, "metadata.json")
-                if os.path.exists(metadata_path):
-                    with open(metadata_path, "r", encoding="utf-8") as f:
-                        metadata = json.load(f)
-                        all_metadata.append(metadata)
-                        total_frames += metadata.get("num_frames", 0)
-                        source_videos.append(metadata.get("source_video", "unknown"))
-
-            if not all_metadata:
-                return None
-
-            # Return aggregated metadata
-            return {
-                "category": category,
-                "label": label,
-                "num_examples": len(subdirs),
-                "num_frames": total_frames,
-                "source_videos": source_videos,
-                "examples": all_metadata
-            }
-
-        except Exception as e:
-            logger.error(f"Failed to read metadata: {str(e)}")
-            return None
 

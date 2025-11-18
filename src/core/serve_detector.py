@@ -137,6 +137,8 @@ class ServeDetector:
 
                     # Few-shot configuration
                     "enable_few_shot": yaml_config.get("few_shot", {}).get("enable", False),
+                    "save_message_images": yaml_config.get("few_shot", {}).get("save_message_images", False),
+                    "saved_images_dir": yaml_config.get("few_shot", {}).get("saved_images_dir", "debug_message_images"),
 
                     # Video segmentation configuration
                     "segment_duration": yaml_config.get("video_segmentation", {}).get("segment_duration", 3.0),
@@ -328,7 +330,7 @@ class ServeDetector:
 
                 logger.info(f"Using few-shot examples: {example_ids}")
 
-                for frames in frame_batches:
+                for idx, frames in enumerate(frame_batches):
                     messages = self.message_manager.create_messages(
                         frames=frames,
                         text=query_text,
@@ -336,15 +338,31 @@ class ServeDetector:
                         example_ids=example_ids
                     )
                     messages_list.append(messages)
+
+                    # Save message images if configured
+                    if self.config.get("save_message_images", False):
+                        batch_dir = os.path.join(
+                            self.config["saved_images_dir"],
+                            f"batch_{idx:03d}"
+                        )
+                        self.message_manager.save_all_images_from_messages(messages, batch_dir)
             else:
                 # Zero-shot mode: no examples
-                for frames in frame_batches:
+                for idx, frames in enumerate(frame_batches):
                     messages = self.message_manager.create_messages(
                         frames=frames,
                         text=query_text,
                         system_prompt=system_prompt
                     )
                     messages_list.append(messages)
+
+                    # Save message images if configured
+                    if self.config.get("save_message_images", False):
+                        batch_dir = os.path.join(
+                            self.config["saved_images_dir"],
+                            f"batch_{idx:03d}"
+                        )
+                        self.message_manager.save_all_images_from_messages(messages, batch_dir)
 
             mode = "few-shot" if self.config["enable_few_shot"] else "zero-shot"
             logger.info(f"Using {mode} mode to analyze {len(messages_list)} segments")

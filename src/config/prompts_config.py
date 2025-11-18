@@ -66,7 +66,7 @@ def get_all_prompts() -> dict:
 FEW_SHOT_CONFIG = {
     "enabled": True,  # 是否启用few-shot
     "examples_dir": "few_shot_examples",  # 示例存储目录
-    "example_ids": [1, 2, 3, 4, 5],  # 使用的示例ID列表
+    "example_ids": [1, 2, 3, 4, 5, 6, 7],  # 使用的示例ID列表
     "example_frames_per_video": 8,  # 每个示例视频提取的帧数
 }
 

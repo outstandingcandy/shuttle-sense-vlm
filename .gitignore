@@ -71,6 +71,7 @@ temp_frames/
 results/
 selected_frames/
 debug_frames/
+debug_message_images/
 output/
 
 # Documentation (if generated)

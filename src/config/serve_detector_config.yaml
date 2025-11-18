@@ -68,6 +68,8 @@ few_shot:
   enable: true # Enable few-shot learning mode
   # When enabled, examples will be loaded from the examples_dir
   # configured in prompts_config.py (FEW_SHOT_CONFIG)
+  save_message_images: false  # Save all images from messages for debugging
+  saved_images_dir: "debug_message_images"  # Directory to save message images
 
 # Video Segmentation (for serve detection)
 video_segmentation:

@@ -400,3 +400,54 @@ class MessageManager:
 
         return messages
 
+    def save_all_images_from_messages(self, messages: List[Dict[str, Any]], output_dir: str) -> List[str]:
+        """
+        Extract and save all images from a messages list to a specified directory.
+
+        Args:
+            messages: List of message dictionaries with content
+            output_dir: Directory to save images to
+
+        Returns:
+            List of saved image file paths
+        """
+        import shutil
+
+        os.makedirs(output_dir, exist_ok=True)
+        saved_paths = []
+        image_counter = 0
+
+        for msg_idx, message in enumerate(messages):
+            if message.get("role") not in ["user", "assistant"]:
+                continue
+
+            content = message.get("content", [])
+            if not isinstance(content, list):
+                continue
+
+            for content_item in content:
+                if content_item.get("type") == "image":
+                    image_url = content_item.get("image", "")
+
+                    # Handle file:// URLs
+                    if image_url.startswith("file://"):
+                        source_path = image_url[7:]  # Remove "file://" prefix
+
+                        if os.path.exists(source_path):
+                            # Create descriptive filename
+                            role = message.get("role", "unknown")
+                            ext = os.path.splitext(source_path)[1] or ".png"
+                            dest_filename = f"{role}_{msg_idx:02d}_{image_counter:03d}{ext}"
+                            dest_path = os.path.join(output_dir, dest_filename)
+
+                            # Copy the image
+                            shutil.copy2(source_path, dest_path)
+                            saved_paths.append(dest_path)
+                            image_counter += 1
+                            logger.debug(f"Saved image: {dest_filename}")
+                        else:
+                            logger.warning(f"Image file not found: {source_path}")
+
+        logger.info(f"Saved {len(saved_paths)} images to {output_dir}")
+        return saved_paths
+

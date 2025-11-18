@@ -65,6 +65,16 @@
       "category": "serve",
       "expected_response": "没有发球动作",
       "query": "这段羽毛球视频中是否包含发球动作？如果包含请给出发球动作所在的时间区间，如果不包含请回答没有发球动作"
+    },
+    {
+      "id": 7,
+      "video": "data/videos/test.mp4",
+      "start_time": 1,
+      "duration": 0.7,
+      "num_frames": 8,
+      "category": "serve",
+      "expected_response": "有发球动作，动作所在的时间区间[0, 8]",
+      "query": "这段羽毛球视频中是否包含发球动作？如果包含请给出发球动作所在的时间区间，如果不包含请回答没有发球动作"
     }
   ]
 }

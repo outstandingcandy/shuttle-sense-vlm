@@ -323,12 +323,8 @@ class ServeDetector:
                         "success": False
                     } for segment in segments_batch]
 
-                # Get example IDs for task
-                task_name = "serve_detection"
-                example_ids = self.annotation_config.get_example_ids_for_task(
-                    task_name=task_name,
-                    num_examples=FEW_SHOT_CONFIG["num_examples"]
-                )
+                # Get example IDs from config
+                example_ids = FEW_SHOT_CONFIG.get("example_ids", [])
 
                 logger.info(f"Using few-shot examples: {example_ids}")
 

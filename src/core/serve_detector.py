@@ -4,6 +4,7 @@ Serve Detection Module - Specialized for badminton serve action detection and an
 """
 
 import logging
+import json
 from PIL import Image
 import numpy as np
 import cv2
@@ -20,42 +21,28 @@ from dashscope import MultiModalConversation
 from core.few_shot_manager import MessageManager
 from utils.response_parser import ResponseParser
 from utils.video_processor import extract_frames_from_video
-from config.prompts_config import SERVE_PROMPTS, FEW_SHOT_CONFIG, FEW_SHOT_SYSTEM_PROMPTS
-from config.annotations_loader import AnnotationConfigLoader
 
 logger = logging.getLogger(__name__)
 
 class ServeDetector:
     """Serve Detector"""
 
-    def __init__(self, config_path: Optional[str] = None, annotation_config_path: Optional[str] = None):
+    def __init__(self, config_path: Optional[str] = None):
         """
         Initialize Serve Detector.
 
         Args:
             config_path: Path to YAML configuration file. If not provided, uses default config file
-                        in src/config/serve_detector_config.yaml
-            annotation_config_path: Path to annotation JSON file for dynamic prompt loading.
-                                  If provided, prompts will be loaded from this file instead of
-                                  hardcoded prompts_config.py. Defaults to docs/annotations_example.json
+                        in src/config/config.yaml
         """
-        # Load configuration: prompts from annotation config or fallback to hardcoded
-        self.annotation_config = None
-        if annotation_config_path:
-            try:
-                self.annotation_config = AnnotationConfigLoader(annotation_config_path)
-                logger.info(f"Using annotation config for prompts from: {annotation_config_path}")
-            except Exception as e:
-                logger.warning(f"Failed to load annotation config: {str(e)}. Falling back to hardcoded prompts.")
-                self.annotation_config = None
-
-        # Load serve detection prompts (from annotation config or fallback to hardcoded)
-        self.serve_questions = SERVE_PROMPTS
-
         # Load configuration from YAML file
         self.config = self._load_config(config_path)
 
-        self.message_manager = MessageManager(FEW_SHOT_CONFIG["examples_dir"])
+        # Load serve detection prompts from config file
+        self.serve_questions = self.config.get("prompts", {}).get("serve", {})
+
+        # Initialize message manager with examples directory from config
+        self.message_manager = MessageManager(self.config.get("few_shot_examples_dir", "few_shot_examples"))
 
     def _load_config(self, config_path: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -73,7 +60,7 @@ class ServeDetector:
                 os.path.dirname(__file__),
                 "..",
                 "config",
-                "serve_detector_config.yaml"
+                "config.yaml"
             )
 
         # Try to load from YAML file
@@ -86,7 +73,6 @@ class ServeDetector:
                 # Get active model and resolve API endpoint
                 active_model_key = yaml_config.get("active_model", "qwen-vl-max")
                 models = yaml_config.get("models", {})
-                api_endpoints = yaml_config.get("api_endpoints", {})
 
                 if active_model_key not in models:
                     logger.warning(f"Active model '{active_model_key}' not found in models config")
@@ -96,18 +82,11 @@ class ServeDetector:
                 # Get model configuration
                 model_config = models[active_model_key]
                 model_name = model_config.get("name")
-                api_key = model_config.get("api")
-
-                if api_key not in api_endpoints:
-                    logger.warning(f"API endpoint '{api_key}' not found for model '{active_model_key}'")
-                    logger.info("Using default configuration")
-                    return self._get_default_config()
 
                 # Get API endpoint configuration
-                api_config = api_endpoints[api_key]
-                api_type = api_config.get("type", "openai")
-                api_base_url = api_config.get("base_url")
-                api_key_env = api_config.get("api_key_env", "OPENAI_API_KEY")
+                api_type = model_config.get("api_type", "openai")
+                api_base_url = model_config.get("base_url")
+                api_key_env = model_config.get("api_key_env", "OPENAI_API_KEY")
 
                 # Build unified configuration
                 config = {
@@ -136,7 +115,10 @@ class ServeDetector:
                     "dashscope_api_key": os.getenv(api_key_env) if api_type == "dashscope" else os.getenv("DASHSCOPE_API_KEY"),
 
                     # Few-shot configuration
-                    "enable_few_shot": yaml_config.get("few_shot", {}).get("enable", False),
+                    "enable_few_shot": yaml_config.get("few_shot", {}).get("enabled", False),
+                    "few_shot_examples_dir": yaml_config.get("few_shot", {}).get("examples_dir", "few_shot_examples"),
+                    "few_shot_example_ids": yaml_config.get("few_shot", {}).get("example_ids", []),
+                    "few_shot_example_frames_per_video": yaml_config.get("few_shot", {}).get("example_frames_per_video", 8),
                     "save_message_images": yaml_config.get("few_shot", {}).get("save_message_images", False),
                     "saved_images_dir": yaml_config.get("few_shot", {}).get("saved_images_dir", "debug_message_images"),
 
@@ -144,11 +126,16 @@ class ServeDetector:
                     "segment_duration": yaml_config.get("video_segmentation", {}).get("segment_duration", 3.0),
                     "overlap_duration": yaml_config.get("video_segmentation", {}).get("overlap_duration", 1.0),
                     "max_segments": yaml_config.get("video_segmentation", {}).get("max_segments", None),
+
+                    # Prompts configuration
+                    "prompts": yaml_config.get("prompts", {}),
+                    "system_prompts": yaml_config.get("system_prompts", {}),
+
+                    # Annotations path
+                    "annotations_path": yaml_config.get("annotations_path", "data/annotations_exp.json"),
                 }
 
                 logger.info(f"Active model: {active_model_key} ({model_name})")
-                logger.info(f"Using API: {api_key} ({api_type}) at {api_base_url}")
-
                 return config
 
             except Exception as e:
@@ -282,19 +269,34 @@ class ServeDetector:
     def _detect_serves_in_batch(self, segments_batch: List[Dict[str, Any]], video_path: str) -> List[Dict[str, Any]]:
         """批量检测发球动作"""
         try:
+            # Generate unique request ID for this batch
+            request_id = str(uuid.uuid4())
+
             # 批量提取帧
             frame_batches = []
             valid_segments = []
-            
-            for segment in segments_batch:
+
+            for segment_idx, segment in enumerate(segments_batch):
                 frames = extract_frames_from_video(
-                    video_path, 
+                    video_path,
                     num_frames=self.config["max_frames"],
                     start_time=segment["start_time"],
                     duration=segment["duration"],
                     frame_size=self.config["frame_size"]
                 )
-                
+
+                # Save message images if configured
+                if self.config.get("save_message_images", False):
+                    # Create request-specific directory structure: saved_images_dir/request_id/segment_idx/
+                    saved_images_sub_dir = os.path.join(
+                        self.config["saved_images_dir"],
+                        request_id,
+                        f"segment_{segment_idx:03d}_{segment['start_time']:.1f}s-{segment['start_time'] + segment['duration']:.1f}s"
+                    )
+                    os.makedirs(saved_images_sub_dir, exist_ok=True)
+                    for i, frame in enumerate(frames):
+                        frame.save(os.path.join(saved_images_sub_dir, f"frame_{i:03d}.png"))
+
                 if frames:
                     frame_batches.append(frames)
                     valid_segments.append(segment)
@@ -307,45 +309,43 @@ class ServeDetector:
                     "success": False
                 } for segment in segments_batch]
             query_text = self.serve_questions["has_serve"]
-            system_prompt = FEW_SHOT_SYSTEM_PROMPTS.get("serve_detection")
+            system_prompt = self.config.get("system_prompts", {}).get("serve_detection")
 
             # Build messages based on few-shot configuration
             messages_list = []
             if self.config["enable_few_shot"]:
-                # Few-shot mode: include examples
-                if not self.annotation_config:
-                    logger.error(
-                        "Few-shot mode enabled but no annotation config provided. "
-                        "Please provide an annotation_config_path to use ID-based examples."
-                    )
-                    return [{
-                        **segment,
-                        "has_serve": False,
-                        "response": "配置错误：未提供annotation config",
-                        "success": False
-                    } for segment in segments_batch]
-
                 # Get example IDs from config
-                example_ids = FEW_SHOT_CONFIG.get("example_ids", [])
+                example_ids = self.config.get("few_shot_example_ids", [])
+
+                # If example_ids is empty or None, load all available examples from annotations
+                if not example_ids:
+                    logger.info("No example_ids specified, loading all available examples from annotations")
+                    try:
+                        annotations_path = self.config.get("annotations_path", "data/annotations_exp.json")
+                        with open(annotations_path, 'r', encoding='utf-8') as f:
+                            annotations_data = json.load(f)
+                            examples = annotations_data.get('examples', [])
+                            example_ids = [ex['id'] for ex in examples]
+                            logger.info(f"Found {len(example_ids)} examples in annotations: {example_ids}")
+                    except Exception as e:
+                        logger.warning(f"Failed to load all examples from annotations: {e}")
+                        logger.warning("Falling back to empty example list")
+                        example_ids = []
 
                 logger.info(f"Using few-shot examples: {example_ids}")
+
+                # Get annotations path from config for MessageManager
+                annotations_path = self.config.get("annotations_path", "data/annotations_exp.json")
 
                 for idx, frames in enumerate(frame_batches):
                     messages = self.message_manager.create_messages(
                         frames=frames,
                         text=query_text,
                         system_prompt=system_prompt,
-                        example_ids=example_ids
+                        example_ids=example_ids,
+                        annotations_path=annotations_path
                     )
                     messages_list.append(messages)
-
-                    # Save message images if configured
-                    if self.config.get("save_message_images", False):
-                        batch_dir = os.path.join(
-                            self.config["saved_images_dir"],
-                            f"batch_{idx:03d}"
-                        )
-                        self.message_manager.save_all_images_from_messages(messages, batch_dir)
             else:
                 # Zero-shot mode: no examples
                 for idx, frames in enumerate(frame_batches):
@@ -366,7 +366,7 @@ class ServeDetector:
 
             mode = "few-shot" if self.config["enable_few_shot"] else "zero-shot"
             logger.info(f"Using {mode} mode to analyze {len(messages_list)} segments")
-            batch_analyses = self._generate_batch(messages_list)
+            batch_analyses = self._generate_batch(messages_list, request_id=request_id)
         
             # 处理结果
             batch_results = []
@@ -399,28 +399,38 @@ class ServeDetector:
             logger.error(f"批量发球检测失败: {str(e)}")
             raise e
 
-    def _generate_batch(self, messages_batch: List[List[Dict]], debug_mode: bool = False) -> List[str]:
+    def _generate_batch(self, messages_batch: List[List[Dict]], request_id: str = None, debug_mode: bool = False) -> List[str]:
         """
         批量生成响应（统一支持单轮和多轮对话）
-        
+
         Args:
             messages_batch: 消息批次
+            request_id: 请求ID，用于组织保存的文件
             debug_mode: 是否保存调试信息
-            
+
         Returns:
             生成的响应列表
         """
+        # Generate request_id if not provided
+        if request_id is None:
+            request_id = str(uuid.uuid4())
+
         # 如果使用DashScope SDK，调用专用方法
         if self.config["use_dashscope_sdk"]:
             logger.info("使用DashScope原生SDK进行推理")
-            return self._generate_with_dashscope(messages_batch, debug_mode)
+            return self._generate_with_dashscope(messages_batch, request_id, debug_mode)
         else:
             logger.info("使用OpenAI API进行推理")
-            return self._generate_with_openai_api(messages_batch, debug_mode)
+            return self._generate_with_openai_api(messages_batch, request_id, debug_mode)
 
-    def _generate_with_dashscope(self, messages_batch: List[List[Dict]], debug_mode: bool = False) -> List[str]:
+    def _generate_with_dashscope(self, messages_batch: List[List[Dict]], request_id: str, debug_mode: bool = False) -> List[str]:
         """
         使用DashScope原生SDK进行批量生成
+
+        Args:
+            messages_batch: 消息批次
+            request_id: 请求ID，用于组织保存的文件
+            debug_mode: 是否保存调试信息
         """
         try:
             responses = []
@@ -443,15 +453,22 @@ class ServeDetector:
             img_str = base64.b64encode(f.read()).decode()
         return f"data:image/png;base64,{img_str}"
 
-    def _generate_with_openai_api(self, messages_batch: List[List[Dict]], debug_mode: bool = False) -> List[str]:
+    def _generate_with_openai_api(self, messages_batch: List[List[Dict]], request_id: str, debug_mode: bool = False) -> List[str]:
         """
         使用OpenAI API进行批量生成
+
+        Args:
+            messages_batch: 消息批次
+            request_id: 请求ID，用于组织保存的文件
+            debug_mode: 是否保存调试信息
         """
         try:
-            debug_dir = f"selected_frames/{uuid.uuid4()}"
+            # Create request-specific debug directory if needed
+            debug_dir = None
             if debug_mode:
+                debug_dir = os.path.join("selected_frames", request_id)
                 os.makedirs(debug_dir, exist_ok=True)
-            
+
             responses = []
  
             for batch_index, conversation in enumerate(messages_batch):
@@ -474,9 +491,10 @@ class ServeDetector:
                             image_b64 = self._encode_image(item["image"])
                             image_index += 1
                             if debug_mode:
-                                debug_sub_dir = f"{debug_dir}/{batch_index}"
+                                # Create subdirectory for each batch: request_id/batch_xxx/
+                                debug_sub_dir = os.path.join(debug_dir, f"batch_{batch_index:03d}")
                                 os.makedirs(debug_sub_dir, exist_ok=True)
-                                item["image"].save(f"{debug_sub_dir}/{image_index}.png")
+                                item["image"].save(os.path.join(debug_sub_dir, f"image_{image_index:03d}.png"))
                             transformed_msg["content"].append({
                                 "type": "image_url",
                                 "image_url": {"url": image_b64}
@@ -490,6 +508,7 @@ class ServeDetector:
                     "max_tokens": self.config["max_new_tokens"],
                     "temperature": self.config["temperature"],
                     "top_p": self.config["top_p"],
+                    "max_completion_tokens": 16000,
                 }
 
                 try:
@@ -507,6 +526,7 @@ class ServeDetector:
                         if result.get('choices') and len(result['choices']) > 0:
                             text = result['choices'][0]['message']['content'].strip()
                             responses.append(text)
+                            logger.info(f"request_id: {request_id}, batch_index: {batch_index}, text: {text}")
                             logger.info(f"openai api response: {result}")
                         else:
                             responses.append("生成失败：无响应内容")

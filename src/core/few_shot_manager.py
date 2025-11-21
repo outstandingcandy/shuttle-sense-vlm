@@ -149,7 +149,7 @@ class MessageManager:
             logger.error(f"Failed to save example frames: {str(e)}")
     
 
-    def load_example_by_id(self, example_id: int) -> Optional[Dict[str, Any]]:
+    def load_example_by_id(self, example_id: int, annotations_path: str = "data/annotations.json") -> Optional[Dict[str, Any]]:
         """
         Load a single example by its ID.
 
@@ -185,7 +185,6 @@ class MessageManager:
                 example_frames.append(frame_path)
 
             # Load metadata from centralized annotations.json
-            annotations_path = "data/annotations.json"
             metadata = {}
             if os.path.exists(annotations_path):
                 try:
@@ -222,7 +221,7 @@ class MessageManager:
             logger.error(f"Failed to load example ID {example_id}: {str(e)}")
             return None
 
-    def load_examples_by_ids(self, example_ids: List[int]) -> List[Dict[str, Any]]:
+    def load_examples_by_ids(self, example_ids: List[int], annotations_path: str = "data/annotations.json") -> List[Dict[str, Any]]:
         """
         Load multiple examples by their IDs.
 
@@ -237,7 +236,7 @@ class MessageManager:
         examples = []
 
         for example_id in example_ids:
-            example_data = self.load_example_by_id(example_id)
+            example_data = self.load_example_by_id(example_id, annotations_path)
             if example_data:
                 examples.append(example_data)
             else:
@@ -295,7 +294,8 @@ class MessageManager:
                        video_path: Optional[str] = None,
                        start_time: Optional[float] = None,
                        end_time: Optional[float] = None,
-                       example_ids: Optional[List[int]] = None) -> List[Dict[str, Any]]:
+                       example_ids: Optional[List[int]] = None,
+                       annotations_path: str = "data/annotations.json") -> List[Dict[str, Any]]:
         """
         Create messages for VLM models, supporting both zero-shot and few-shot scenarios.
 
@@ -310,7 +310,7 @@ class MessageManager:
             start_time: Video segment start time (seconds)
             end_time: Video segment end time (seconds)
             example_ids: List of example IDs to use for few-shot learning
-
+            annotations_path: Path to annotations file
         Returns:
             Message list in multi-turn conversation format:
             - Zero-shot: [{"role": "system", ...}, {"role": "user", "content": [...]}]
@@ -350,7 +350,7 @@ class MessageManager:
         if example_ids:
             logger.info(f"Creating few-shot messages with {len(example_ids)} examples")
 
-            examples = self.load_examples_by_ids(example_ids)
+            examples = self.load_examples_by_ids(example_ids, annotations_path)
 
             for example_data in examples:
                 example_frames = example_data['frames']

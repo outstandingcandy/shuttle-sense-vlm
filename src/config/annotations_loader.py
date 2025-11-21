@@ -11,7 +11,7 @@ from typing import Dict, List, Any, Optional
 logger = logging.getLogger(__name__)
 
 
-class AnnotationConfigLoader:
+class AnnotationsLoader:
     """
     Loads and manages configuration from annotation JSON files.
 
@@ -28,7 +28,7 @@ class AnnotationConfigLoader:
         """
         self.annotation_path = Path(annotation_path)
         self.data = self._load_json()
-        logger.info(f"Loaded annotation config from: {annotation_path}")
+        logger.info(f"Loaded annotation from: {annotation_path}")
 
     def _load_json(self) -> Dict[str, Any]:
         """Load and parse annotation JSON file."""

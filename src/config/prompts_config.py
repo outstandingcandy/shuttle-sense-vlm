@@ -3,11 +3,17 @@
 提示词配置文件 - 统一管理所有模块的提示词
 
 ⚠️  DEPRECATION NOTICE:
-This module is being replaced by the annotation-based configuration system.
-New code should use AnnotationConfigLoader (src/config/annotations_loader.py) to load
-prompts and configuration from annotation JSON files (e.g., docs/annotations_example.json).
+This module has been replaced by the unified configuration system in config.yaml.
+All prompts, few-shot settings, and system prompts are now defined in config.yaml.
 
-This file is kept for backward compatibility with existing code.
+For backward compatibility only. DO NOT use in new code.
+Use config.yaml instead:
+- Load config with: yaml.safe_load(open("src/config/config.yaml"))
+- Access prompts via: config["prompts"]["serve"]["has_serve"]
+- Access system prompts via: config["system_prompts"]["serve_detection"]
+- Access few-shot settings via: config["few_shot"]
+
+This file will be removed in a future version.
 """
 
 # 发球检测相关提示词
@@ -66,7 +72,7 @@ def get_all_prompts() -> dict:
 FEW_SHOT_CONFIG = {
     "enabled": True,  # 是否启用few-shot
     "examples_dir": "few_shot_examples",  # 示例存储目录
-    "example_ids": [1, 2, 3, 4, 5, 6, 7],  # 使用的示例ID列表
+    "example_ids": [1, 2, 3, 4, 5, 6],  # 使用的示例ID列表
     "example_frames_per_video": 8,  # 每个示例视频提取的帧数
 }
 

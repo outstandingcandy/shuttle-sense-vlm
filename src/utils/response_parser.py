@@ -3,6 +3,8 @@
 响应解析工具 - 解析模型响应并提取关键信息
 """
 
+import json
+
 class ResponseParser:
     """模型响应解析器"""
     
@@ -10,31 +12,14 @@ class ResponseParser:
     def contains_serve(response: str) -> bool:
         """判断模型响应是否表示包含发球动作"""
         response = response.lower().strip()
-        
-        # 发球积极指标
-        serve_indicators = [
-            "有发球", "发球动作", "发球", "serve", "serving",
-            "高远球发球", "平快球发球", "网前球发球", "反手发球",
-            "准备发球", "发球姿势", "发球瞬间", "开球"
-        ]
-        
-        # 发球消极指标
-        no_serve_indicators = [
-            "无发球", "没有发球", "不是发球", "非发球",
-            "接发球", "回球", "对拉", "杀球", "吊球"
-        ]
-        
-        # 检查消极指标
-        for neg in no_serve_indicators:
-            if neg in response:
-                return False
-        
-        # 检查积极指标
-        for pos in serve_indicators:
-            if pos in response:
+        try:
+            result = json.loads(response)
+            if result["action_type"] == "serve":
                 return True
-        
-        return False
+            else:
+                return False
+        except:
+            return False
 
     @staticmethod
     def contains_rally(response: str) -> bool:

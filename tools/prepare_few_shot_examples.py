@@ -160,7 +160,8 @@ def process_single_example(
     expected_response: str = None,
     start_time: float = 0,
     duration: float = None,
-    num_frames: int = 8
+    num_frames: int = 8,
+    frame_size: List[int] = [2048, 2048]
 ) -> bool:
     """
     处理单个示例提取（ID-based structure）
@@ -193,7 +194,8 @@ def process_single_example(
             expected_response=expected_response,
             num_frames=num_frames,
             start_time=start_time,
-            duration=duration
+            duration=duration,
+            frame_size=frame_size
         )
 
         if frames:
@@ -208,7 +210,7 @@ def process_single_example(
         return False
 
 
-def process_batch(manager: MessageManager, examples: List[Dict[str, Any]]) -> Dict[str, int]:
+def process_batch(manager: MessageManager, examples: List[Dict[str, Any]], frame_size: List[int] = [2048, 2048]) -> Dict[str, int]:
     """
     批量处理多个示例（ID-based structure）
 
@@ -230,7 +232,8 @@ def process_batch(manager: MessageManager, examples: List[Dict[str, Any]]) -> Di
             expected_response=example.get('expected_response'),
             start_time=example.get('start_time', 0),
             duration=example.get('duration'),
-            num_frames=example.get('num_frames', 8)
+            num_frames=example.get('num_frames', 8),
+            frame_size=frame_size
         )
 
         if success:
@@ -288,6 +291,9 @@ def main():
     parser.add_argument('--examples-dir', default='few_shot_examples',
                        help='示例存储目录 (默认: few_shot_examples)')
 
+    parser.add_argument('--frame-size', type=int, nargs=2, default=[2048, 2048],
+                       help='帧大小 (默认: [2048, 2048])')
+
     args = parser.parse_args()
 
     # 初始化管理器
@@ -306,7 +312,7 @@ def main():
             logger.warning("注释文件中没有找到任何示例")
             return 1
 
-        stats = process_batch(manager, examples)
+        stats = process_batch(manager, examples, frame_size=args.frame_size)
         print_summary(manager, stats)
 
         return 0 if stats['failed'] == 0 else 1

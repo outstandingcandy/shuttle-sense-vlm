@@ -1,4 +1,13 @@
 # Serve Detector Configuration File
+#
+# ⚠️  DEPRECATION NOTICE:
+# This configuration file has been replaced by the unified config.yaml file.
+# All settings (API endpoints, models, prompts, few-shot config) are now in config.yaml.
+#
+# This file is kept for backward compatibility only.
+# New code should use config.yaml instead.
+#
+# This file will be removed in a future version.
 
 # API Endpoints Configuration
 # Define available API endpoints that can be used to access models
@@ -68,7 +77,7 @@ few_shot:
   enable: true # Enable few-shot learning mode
   # When enabled, examples will be loaded from the examples_dir
   # configured in prompts_config.py (FEW_SHOT_CONFIG)
-  save_message_images: false  # Save all images from messages for debugging
+  save_message_images: true # Save all images from messages for debugging
   saved_images_dir: "debug_message_images"  # Directory to save message images
 
 # Video Segmentation (for serve detection)
@@ -77,3 +86,4 @@ video_segmentation:
   overlap_duration: 1.0  # Overlap between consecutive segments in seconds
   max_segments: null     # Maximum number of segments to process (null = process all segments)
 
+annotations_path: "data/annotations_exp.json"

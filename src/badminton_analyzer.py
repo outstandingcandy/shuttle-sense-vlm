@@ -20,10 +20,10 @@ logger = logging.getLogger(__name__)
 class BadmintonAnalyzer:
     """羽毛球分析器，支持Qwen3-VL"""
     
-    def __init__(self, base_model_name: str = "Qwen/Qwen3-VL-3B-Instruct", max_workers: int = None, use_vllm: bool = True, api_base: str = None, api_key: str = None, debug: bool = False, annotation_config_path: Optional[str] = None):
+    def __init__(self, base_model_name: str = "Qwen/Qwen3-VL-3B-Instruct", max_workers: int = None, use_vllm: bool = True, api_base: str = None, api_key: str = None, debug: bool = False, config_path: str = None):
         """
         初始化检测器
-        
+
         Args:
             base_model_name: 模型名称
             max_workers: 并行处理的最大工作线程数，None表示自动选择
@@ -31,10 +31,9 @@ class BadmintonAnalyzer:
             api_base: API服务器地址 (例如: http://localhost:8000/v1)
             api_key: API密钥
             debug: 是否启用调试模式
-            annotation_config_path: 注释配置文件路径
         """
         self.debug = debug
-        self.serve_detector = ServeDetector(annotation_config_path=annotation_config_path)
+        self.serve_detector = ServeDetector(config_path=config_path)
     
     def detect_serves(self, 
                       video_path: str, workers: int = 1) -> Dict[str, Any]:
@@ -105,21 +104,20 @@ def main():
     parser.add_argument("--output-format", type=str, choices=["json", "csv", "txt"], default="json", help="输出格式")
     parser.add_argument("--verbose", action="store_true", help="详细输出")
     parser.add_argument("--debug", action="store_true", help="启用调试模式")
-    parser.add_argument("--annotation-config-path", type=str, default="data/annotations.json", help="注释配置文件路径，默认使用data/annotations.json")
+    parser.add_argument("--config-path", type=str, help="配置文件路径")
     args = parser.parse_args()
-    
+
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
-    
+
     try:
         analyzer = BadmintonAnalyzer(
-            debug=args.debug,
-            annotation_config_path=args.annotation_config_path
+            debug=args.debug
         )
-        
+
         result = analyzer.detect_serves(video_path=args.video)
         print(result)
-        
+
     except Exception as e:
         print(f"程序执行失败: {str(e)}")
         raise e

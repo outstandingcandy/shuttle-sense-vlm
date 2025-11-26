@@ -48,8 +48,20 @@ models:
     api_key_env: "OPENAI_API_KEY"
 
 # Active Model Selection
-active_model: "qwen3-vl-8b-local"
-# active_model: "qwen3-vl-32b-local"
+# active_model: "qwen3-vl-8b-local"
+active_model: "qwen3-vl-32b-local"
+
+# ============================================================================
+# S3 Configuration (for video uploads)
+# ============================================================================
+s3:
+  enabled: false  # Enable S3 video upload feature
+  bucket_name: ""  # S3 bucket name (or set S3_BUCKET_NAME env var)
+  region: "us-west-2"  # AWS region (or set AWS_REGION env var)
+  prefix: "videos/"  # Prefix for uploaded videos
+  auto_upload: false  # Automatically upload local videos to S3 before processing
+  cleanup_local: false  # Delete local video after successful upload
+  expiration: 3600  # Presigned URL expiration time in seconds (1 hour)
 
 # ============================================================================
 # Video Processing Configuration
@@ -57,6 +69,9 @@ active_model: "qwen3-vl-8b-local"
 video_frames:
   max_frames: 8  # Maximum number of frames to extract per video segment
   frame_size: [1536, 1536]  # Frame size [width, height]
+  mode: "frame"  # Processing mode: "frame" (extract frames) or "video" (use video URLs)
+  video_fps: 8  # FPS when creating videos from frames (for video mode)
+  video_temp_dir: "temp_videos"  # Temporary directory for created videos
 
 video_segmentation:
   segment_duration: 2.0  # Duration of each video segment in seconds
@@ -77,7 +92,7 @@ inference:
 # Few-shot Learning Configuration
 # ============================================================================
 few_shot:
-  enabled: true # Enable few-shot learning mode
+  enabled: false # Enable few-shot learning mode
   examples_dir: "few_shot_examples"  # Directory for storing example frames
 
   # List of example IDs to use for few-shot learning

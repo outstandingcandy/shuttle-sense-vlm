@@ -21,6 +21,8 @@ from dashscope import MultiModalConversation
 from core.few_shot_manager import MessageManager
 from utils.response_parser import ResponseParser
 from utils.video_processor import extract_frames_from_video
+from utils.video_creator import VideoCreator
+from utils.s3_uploader import S3VideoUploader
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,39 @@ class ServeDetector:
 
         # Initialize message manager with examples directory from config
         self.message_manager = MessageManager(self.config.get("few_shot_examples_dir", "few_shot_examples"))
+
+        # Initialize video creator if video mode is enabled
+        video_config = self.config.get("video_frames", {})
+        self.video_mode = video_config.get("mode", "frame") == "video"
+        if self.video_mode:
+            self.video_creator = VideoCreator(
+                fps=video_config.get("video_fps", 8),
+                codec="mp4v"
+            )
+            logger.info("Video mode enabled: will create videos from frames")
+        else:
+            self.video_creator = None
+            logger.info("Frame mode enabled: will send individual frames")
+
+        # Initialize S3 uploader if S3 is enabled
+        s3_config = self.config.get("s3", {})
+        if s3_config.get("enabled", False):
+            try:
+                self.s3_uploader = S3VideoUploader(
+                    bucket_name=s3_config.get("bucket_name") or os.getenv("S3_BUCKET_NAME"),
+                    aws_region=s3_config.get("region") or os.getenv("AWS_REGION", "us-west-2"),
+                    s3_prefix=s3_config.get("prefix", "videos/")
+                )
+                self.s3_enabled = True
+                logger.info(f"S3 uploader initialized for bucket: {self.s3_uploader.bucket_name}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize S3 uploader: {e}. S3 features disabled.")
+                self.s3_uploader = None
+                self.s3_enabled = False
+        else:
+            self.s3_uploader = None
+            self.s3_enabled = False
+            logger.info("S3 upload disabled")
 
     def _load_config(self, config_path: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -272,11 +307,20 @@ class ServeDetector:
             # Generate unique request ID for this batch
             request_id = str(uuid.uuid4())
 
-            # 批量提取帧
+            # 批量提取帧并处理（frame模式或video模式）
             frame_batches = []
+            video_url_batches = []
             valid_segments = []
 
+            # Create temporary directory for videos if in video mode
+            video_temp_dir = None
+            if self.video_mode:
+                video_config = self.config.get("video_frames", {})
+                video_temp_dir = video_config.get("video_temp_dir", "temp_videos")
+                os.makedirs(video_temp_dir, exist_ok=True)
+
             for segment_idx, segment in enumerate(segments_batch):
+                # Extract frames from video file
                 frames = extract_frames_from_video(
                     video_path,
                     num_frames=self.config["max_frames"],
@@ -284,6 +328,9 @@ class ServeDetector:
                     duration=segment["duration"],
                     frame_size=self.config["frame_size"]
                 )
+
+                if not frames:
+                    continue
 
                 # Save message images if configured
                 if self.config.get("save_message_images", False):
@@ -297,11 +344,66 @@ class ServeDetector:
                     for i, frame in enumerate(frames):
                         frame.save(os.path.join(saved_images_sub_dir, f"frame_{i:03d}.png"))
 
-                if frames:
+                # If video mode is enabled, create video from frames
+                if self.video_mode and self.video_creator:
+                    try:
+                        # Create video from frames
+                        video_filename = f"segment_{segment_idx:03d}_{request_id[:8]}_{segment['start_time']:.1f}s.mp4"
+                        local_video_path = os.path.join(video_temp_dir, video_filename)
+
+                        self.video_creator.create_video_from_frames(
+                            frames=frames,
+                            output_path=local_video_path,
+                            frame_size=tuple(self.config["frame_size"])
+                        )
+                        logger.info(f"Created video for segment {segment_idx}: {local_video_path}")
+
+                        # Upload to S3 if enabled
+                        video_url = None
+                        if self.s3_enabled and self.s3_uploader:
+                            try:
+                                s3_config = self.config.get("s3", {})
+                                expiration = s3_config.get("expiration", 3600)
+                                cleanup_local = s3_config.get("cleanup_local", False)
+
+                                video_url = self.s3_uploader.upload_video(
+                                    local_path=local_video_path,
+                                    expiration=expiration
+                                )
+                                logger.info(f"Uploaded video to S3: {video_url}")
+
+                                # Clean up local video if configured
+                                if cleanup_local:
+                                    try:
+                                        os.remove(local_video_path)
+                                        logger.info(f"Deleted local video: {local_video_path}")
+                                    except Exception as e:
+                                        logger.warning(f"Failed to delete local video: {e}")
+                            except Exception as e:
+                                logger.error(f"Failed to upload video to S3: {e}")
+                                logger.info("Falling back to local video path")
+                                video_url = local_video_path
+                        else:
+                            video_url = local_video_path
+
+                        # Store video URL
+                        video_url_batches.append(video_url)
+                        frame_batches.append(None)  # Placeholder
+                        valid_segments.append(segment)
+
+                    except Exception as e:
+                        logger.error(f"Failed to create video for segment {segment_idx}: {e}")
+                        logger.info("Falling back to frame mode for this segment")
+                        frame_batches.append(frames)
+                        video_url_batches.append(None)
+                        valid_segments.append(segment)
+                else:
+                    # Frame mode: store frames directly
                     frame_batches.append(frames)
+                    video_url_batches.append(None)
                     valid_segments.append(segment)
-            
-            if not frame_batches:
+
+            if not valid_segments:
                 return [{
                     **segment,
                     "has_serve": False,
@@ -311,7 +413,7 @@ class ServeDetector:
             query_text = self.serve_questions["has_serve"]
             system_prompt = self.config.get("system_prompts", {}).get("serve_detection")
 
-            # Build messages based on few-shot configuration
+            # Build messages based on few-shot configuration and mode (frame or video)
             messages_list = []
             if self.config["enable_few_shot"]:
                 # Get example IDs from config
@@ -337,32 +439,52 @@ class ServeDetector:
                 # Get annotations path from config for MessageManager
                 annotations_path = self.config.get("annotations_path", "data/annotations_exp.json")
 
-                for idx, frames in enumerate(frame_batches):
-                    messages = self.message_manager.create_messages(
-                        frames=frames,
-                        text=query_text,
-                        system_prompt=system_prompt,
-                        example_ids=example_ids,
-                        annotations_path=annotations_path
-                    )
+                for idx in range(len(valid_segments)):
+                    video_url = video_url_batches[idx]
+                    frames = frame_batches[idx]
+
+                    # Check if we're using video URL mode or frame mode
+                    if video_url is not None:
+                        # Video URL mode - use MessageManager with video URL support
+                        messages = self.message_manager.create_messages(
+                            video_url=video_url,
+                            text=query_text,
+                            system_prompt=system_prompt,
+                            example_ids=example_ids,
+                            annotations_path=annotations_path
+                        )
+                    else:
+                        # Frame mode - use MessageManager with frames
+                        messages = self.message_manager.create_messages(
+                            frames=frames,
+                            text=query_text,
+                            system_prompt=system_prompt,
+                            example_ids=example_ids,
+                            annotations_path=annotations_path
+                        )
                     messages_list.append(messages)
             else:
                 # Zero-shot mode: no examples
-                for idx, frames in enumerate(frame_batches):
-                    messages = self.message_manager.create_messages(
-                        frames=frames,
-                        text=query_text,
-                        system_prompt=system_prompt
-                    )
-                    messages_list.append(messages)
+                for idx in range(len(valid_segments)):
+                    video_url = video_url_batches[idx]
+                    frames = frame_batches[idx]
 
-                    # Save message images if configured
-                    if self.config.get("save_message_images", False):
-                        batch_dir = os.path.join(
-                            self.config["saved_images_dir"],
-                            f"batch_{idx:03d}"
+                    # Check if we're using video URL mode or frame mode
+                    if video_url is not None:
+                        # Video URL mode - use MessageManager with video URL support
+                        messages = self.message_manager.create_messages(
+                            video_url=video_url,
+                            text=query_text,
+                            system_prompt=system_prompt
                         )
-                        self.message_manager.save_all_images_from_messages(messages, batch_dir)
+                    else:
+                        # Frame mode - use MessageManager with frames
+                        messages = self.message_manager.create_messages(
+                            frames=frames,
+                            text=query_text,
+                            system_prompt=system_prompt
+                        )
+                    messages_list.append(messages)
 
             mode = "few-shot" if self.config["enable_few_shot"] else "zero-shot"
             logger.info(f"Using {mode} mode to analyze {len(messages_list)} segments")
@@ -372,15 +494,26 @@ class ServeDetector:
             batch_results = []
             for i, (segment, analysis) in enumerate(zip(valid_segments, batch_analyses)):
                 has_serve = ResponseParser.contains_serve(analysis)
-                
+
+                # Determine the mode used and add appropriate metadata
+                video_url = video_url_batches[i]
+                frames = frame_batches[i]
+
                 segment_result = {
                     **segment,
                     "has_serve": has_serve,
                     "serve_response": analysis,
                     "success": True,
-                    "num_frames": len(frame_batches[i])
                 }
-                
+
+                # Add mode-specific metadata
+                if video_url is not None:
+                    segment_result["mode"] = "video"
+                    segment_result["video_url"] = video_url
+                else:
+                    segment_result["mode"] = "frame"
+                    segment_result["num_frames"] = len(frames) if frames else 0
+
                 batch_results.append(segment_result)
             
             # 处理无法提取帧的片段
@@ -394,10 +527,67 @@ class ServeDetector:
                     })
             
             return batch_results
-            
+
         except Exception as e:
             logger.error(f"批量发球检测失败: {str(e)}")
             raise e
+
+    def _create_messages_with_video_url(
+        self,
+        video_url: str,
+        text: str,
+        system_prompt: Optional[str] = None,
+        segment: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Create messages with video URL for DashScope API.
+
+        Args:
+            video_url: URL of the video (S3 or other public URL)
+            text: Query text
+            system_prompt: Optional system prompt
+            segment: Optional segment information (for time-based queries)
+
+        Returns:
+            List of message dictionaries
+        """
+        messages = []
+
+        # Add system prompt if provided
+        if system_prompt:
+            messages.append({
+                "role": "system",
+                "content": [{"type": "text", "text": system_prompt}]
+            })
+
+        # Build user message with video URL
+        user_content = [
+            {
+                "type": "video_url",
+                "video_url": {"url": video_url}
+            }
+        ]
+
+        # Add time range information if segment is provided
+        if segment:
+            time_info = f" (时间段: {segment['start_time']:.1f}s - {segment['end_time']:.1f}s)"
+            user_content.append({
+                "type": "text",
+                "text": text + time_info
+            })
+        else:
+            user_content.append({
+                "type": "text",
+                "text": text
+            })
+
+        messages.append({
+            "role": "user",
+            "content": user_content
+        })
+
+        logger.info(f"Created messages with video URL: {video_url}")
+        return messages
 
     def _generate_batch(self, messages_batch: List[List[Dict]], request_id: str = None, debug_mode: bool = False) -> List[str]:
         """
@@ -481,6 +671,7 @@ class ServeDetector:
                 
                 for msg in conversation:
                     transformed_msg = {"role": msg["role"], "content": []}
+                    frame_list = []
                     for item in msg.get("content", []):
                         if item["type"] == "text":
                             transformed_msg["content"].append({
@@ -489,16 +680,18 @@ class ServeDetector:
                             })
                         elif item["type"] == "image":
                             image_b64 = self._encode_image(item["image"])
+                            frame_list.append(image_b64)
                             image_index += 1
                             if debug_mode:
                                 # Create subdirectory for each batch: request_id/batch_xxx/
                                 debug_sub_dir = os.path.join(debug_dir, f"batch_{batch_index:03d}")
                                 os.makedirs(debug_sub_dir, exist_ok=True)
                                 item["image"].save(os.path.join(debug_sub_dir, f"image_{image_index:03d}.png"))
-                            transformed_msg["content"].append({
-                                "type": "image_url",
-                                "image_url": {"url": image_b64}
-                            })
+                    if frame_list:
+                        transformed_msg["content"].append({
+                            "type": "video",
+                            "video": frame_list
+                        })
                     transformed_conversation.append(transformed_msg)
 
                 # 调用OpenAI API

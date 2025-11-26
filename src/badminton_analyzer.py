@@ -34,7 +34,7 @@ class BadmintonAnalyzer:
         """
         self.debug = debug
         self.serve_detector = ServeDetector(config_path=config_path)
-    
+ 
     def detect_serves(self, 
                       video_path: str, workers: int = 1) -> Dict[str, Any]:
         """

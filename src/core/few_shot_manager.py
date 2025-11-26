@@ -287,26 +287,29 @@ class MessageManager:
         return '_'.join(parts)
 
     def create_messages(self,
-                       frames: List[Image.Image],
-                       text: str,
+                       frames: Optional[List[Image.Image]] = None,
+                       text: str = "",
                        system_prompt: Optional[str] = None,
                        session_id: Optional[str] = None,
                        video_path: Optional[str] = None,
+                       video_url: Optional[str] = None,
                        start_time: Optional[float] = None,
                        end_time: Optional[float] = None,
                        example_ids: Optional[List[int]] = None,
                        annotations_path: str = "data/annotations.json") -> List[Dict[str, Any]]:
         """
         Create messages for VLM models, supporting both zero-shot and few-shot scenarios.
+        Supports both frame-based and video URL-based modes.
 
         When no examples are provided, creates zero-shot messages.
 
         Args:
-            frames: Query frames to analyze
+            frames: Query frames to analyze (for frame mode)
             text: Query text/question
             system_prompt: Optional system prompt
             session_id: Optional session ID (auto-generated if not provided)
             video_path: Video path for session ID generation
+            video_url: Video URL to use instead of frames (for video mode)
             start_time: Video segment start time (seconds)
             end_time: Video segment end time (seconds)
             example_ids: List of example IDs to use for few-shot learning
@@ -317,19 +320,29 @@ class MessageManager:
             - Few-shot: [{"role": "system", ...}, {"role": "user", ...}, {"role": "assistant", ...}, ..., {"role": "user", "content": [...]}]
 
         Examples:
-            # Zero-shot usage
+            # Zero-shot usage with frames
             messages = manager.create_messages(
                 frames=video_frames,
                 text="Is there a serve in this video?"
             )
 
-            # Few-shot usage
+            # Zero-shot usage with video URL
+            messages = manager.create_messages(
+                video_url="https://s3.amazonaws.com/bucket/video.mp4",
+                text="Is there a serve in this video?"
+            )
+
+            # Few-shot usage with frames
             messages = manager.create_messages(
                 frames=video_frames,
                 text="Is there a serve in this video?",
                 example_ids=[1, 2, 3, 4, 5]
             )
         """
+        # Validate input: must provide either frames or video_url
+        if frames is None and video_url is None:
+            raise ValueError("Must provide either 'frames' or 'video_url'")
+
         # Generate session ID if not provided
         if session_id is None:
             session_id = self._generate_session_id(video_path, start_time, end_time)
@@ -386,8 +399,18 @@ class MessageManager:
 
         # Add actual query (user's final question)
         query_content = []
-        for image_url in self._save_frames_to_temp(frames, session_dir):
-            query_content.append({"type": "image", "image": image_url})
+
+        # Handle video URL mode or frame mode
+        if video_url is not None:
+            # Video URL mode: add video URL to content
+            logger.info(f"Using video URL mode: {video_url}")
+            query_content.append({"type": "video", "video": video_url})
+        else:
+            # Frame mode: add all frames to content
+            logger.info(f"Using frame mode with {len(frames)} frames")
+            for image_url in self._save_frames_to_temp(frames, session_dir):
+                query_content.append({"type": "image", "image": image_url})
+
         query_content.append({"type": "text", "text": text})
 
         messages.append({
@@ -396,7 +419,8 @@ class MessageManager:
         })
 
         mode = "few-shot" if example_ids else "zero-shot"
-        logger.info(f"Created {mode} message with {len(frames)} query frames")
+        content_type = "video URL" if video_url else f"{len(frames) if frames else 0} frames"
+        logger.info(f"Created {mode} message with {content_type}")
 
         return messages
 

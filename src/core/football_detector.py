@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Serve Detection Module - Specialized for badminton serve action detection and analysis
+Football Action Detection Module - Specialized for football action detection and analysis
 """
 
 import logging
@@ -26,12 +26,12 @@ from utils.s3_uploader import S3VideoUploader
 
 logger = logging.getLogger(__name__)
 
-class ServeDetector:
-    """Serve Detector"""
+class FootballDetector:
+    """Football Action Detector"""
 
     def __init__(self, config_path: Optional[str] = None):
         """
-        Initialize Serve Detector.
+        Initialize Football Detector.
 
         Args:
             config_path: Path to YAML configuration file. If not provided, uses default config file
@@ -40,8 +40,8 @@ class ServeDetector:
         # Load configuration from YAML file
         self.config = self._load_config(config_path)
 
-        # Load serve detection prompts from config file
-        self.serve_questions = self.config.get("prompts", {}).get("serve", {})
+        # Load football detection prompts from config file
+        self.football_questions = self.config.get("prompts", {}).get("football", {})
 
         # Initialize message manager with examples directory from config
         self.message_manager = MessageManager(
@@ -210,24 +210,26 @@ class ServeDetector:
             "annotations_path": "data/annotations_exp.json",
         }
 
-    def detect_all_serves(self,
-                         video_path: str,
-                         segment_duration: float = None,
-                         overlap_duration: float = None,
-                         max_segments: int = None,
-                         workers: int = None) -> List[Dict[str, Any]]:
+    def detect_all_actions(self,
+                          video_path: str,
+                          action_type: str = "goal",
+                          segment_duration: float = None,
+                          overlap_duration: float = None,
+                          max_segments: int = None,
+                          workers: int = None) -> List[Dict[str, Any]]:
         """
-        检测视频中所有的发球时刻
+        检测视频中所有的足球动作
 
         Args:
             video_path: 视频文件路径
+            action_type: 动作类型 (goal, pass, tackle, shot, etc.)
             segment_duration: 每段时长（秒），None时使用config中的值
             overlap_duration: 重叠时长（秒），None时使用config中的值
             max_segments: 最大处理片段数（用于测试），None时使用config中的值
             workers: 并行处理的最大工作线程数
 
         Returns:
-            包含发球检测结果的列表
+            包含动作检测结果的列表
         """
         # Use config values if not provided
         if segment_duration is None:
@@ -236,70 +238,69 @@ class ServeDetector:
             overlap_duration = self.config.get("video_segmentation", {}).get("overlap_duration", 1.0)
         if max_segments is None:
             max_segments = self.config.get("video_segmentation", {}).get("max_segments", None)
-        
+
         # 获取视频信息
-        import cv2
         cap = cv2.VideoCapture(str(video_path))
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         total_duration = total_frames / fps if fps > 0 else 0
         cap.release()
-        
-        # 生成时间片段（用于发球检测）
+
+        # 生成时间片段
         segments = []
         current_start = 0.0
         segment_index = 0
-        
+
         while current_start < total_duration:
             current_end = min(current_start + segment_duration, total_duration)
-            
+
             segments.append({
                 "segment_index": segment_index,
                 "start_time": current_start,
                 "end_time": current_end,
                 "duration": current_end - current_start
             })
-            
+
             segment_index += 1
             current_start += (segment_duration - overlap_duration)
-            
+
             if overlap_duration >= segment_duration:
                 current_start += 0.1
-            
+
             if max_segments and len(segments) >= max_segments:
                 break
-        
-        logger.info(f"生成了 {len(segments)} 个发球检测片段")
-        
-        # 批量检测发球
-        serve_segments = []
+
+        logger.info(f"生成了 {len(segments)} 个动作检测片段")
+
+        # 批量检测动作
+        action_segments = []
         batch_size = min(self.config.get("inference", {}).get("batch_size", 4), len(segments))
         segment_batches = [segments[i:i + batch_size] for i in range(0, len(segments), batch_size)]
-        
+
         with ThreadPoolExecutor(max_workers=workers) as executor:
             future_to_batch = {
-                executor.submit(self._detect_serves_in_batch, batch, video_path): batch
+                executor.submit(self._detect_actions_in_batch, batch, video_path, action_type): batch
                 for batch in segment_batches
             }
-            
-            for future in tqdm(as_completed(future_to_batch), 
-                             desc="检测发球动作", 
+
+            for future in tqdm(as_completed(future_to_batch),
+                             desc=f"检测{action_type}动作",
                              total=len(segment_batches)):
                 try:
                     batch_results = future.result()
                     for segment_result in batch_results:
-                        if segment_result.get("has_serve", False):
-                            serve_segments.append(segment_result)
-                            logger.info(f"检测到发球: {segment_result.get('start_time', 0):.1f}s - {segment_result.get('end_time', 0):.1f}s")
-                        
+                        if segment_result.get("has_action", False):
+                            action_segments.append(segment_result)
+                            logger.info(f"检测到{action_type}: {segment_result.get('start_time', 0):.1f}s - {segment_result.get('end_time', 0):.1f}s")
+
                 except Exception as e:
-                    logger.error(f"发球检测批处理失败: {str(e)}")
+                    logger.error(f"动作检测批处理失败: {str(e)}")
                     raise e
-        
-        return serve_segments
-    
-    def _detect_serves_in_batch(self, segments_batch: List[Dict[str, Any]], video_path: str) -> List[Dict[str, Any]]:
-        """批量检测发球动作"""
+
+        return action_segments
+
+    def _detect_actions_in_batch(self, segments_batch: List[Dict[str, Any]], video_path: str, action_type: str) -> List[Dict[str, Any]]:
+        """批量检测足球动作"""
         try:
             # Generate unique request ID for this batch
             request_id = str(uuid.uuid4())
@@ -335,7 +336,6 @@ class ServeDetector:
 
                 # Save message images if configured
                 if self.config.get("few_shot", {}).get("save_message_images", False):
-                    # Create request-specific directory structure: saved_images_dir/request_id/segment_idx/
                     saved_images_dir = self.config.get("few_shot", {}).get("saved_images_dir", "debug_message_images")
                     saved_images_sub_dir = os.path.join(
                         saved_images_dir,
@@ -408,12 +408,15 @@ class ServeDetector:
             if not valid_segments:
                 return [{
                     **segment,
-                    "has_serve": False,
+                    "has_action": False,
                     "response": "无法提取帧",
                     "success": False
                 } for segment in segments_batch]
-            query_text = self.serve_questions["has_serve"]
-            system_prompt = self.config.get("system_prompts", {}).get("serve_detection")
+
+            # Get appropriate question based on action type
+            query_text = self.football_questions.get(f"has_{action_type}",
+                                                     self.football_questions.get("has_action", ""))
+            system_prompt = self.config.get("system_prompts", {}).get("football_detection")
 
             # Build messages based on few-shot configuration and mode (frame or video)
             messages_list = []
@@ -491,11 +494,12 @@ class ServeDetector:
             mode = "few-shot" if self.config.get("few_shot", {}).get("enabled", False) else "zero-shot"
             logger.info(f"Using {mode} mode to analyze {len(messages_list)} segments")
             batch_analyses = self._generate_batch(messages_list, request_id=request_id)
-        
+
             # 处理结果
             batch_results = []
             for i, (segment, analysis) in enumerate(zip(valid_segments, batch_analyses)):
-                has_serve = ResponseParser.contains_serve(analysis)
+                # Parse action detection based on action_type
+                has_action = ResponseParser.contains_football_action(analysis, action_type)
 
                 # Determine the mode used and add appropriate metadata
                 video_url = video_url_batches[i]
@@ -503,8 +507,9 @@ class ServeDetector:
 
                 segment_result = {
                     **segment,
-                    "has_serve": has_serve,
-                    "serve_response": analysis,
+                    "action_type": action_type,
+                    "has_action": has_action,
+                    "action_response": analysis,
                     "success": True,
                 }
 
@@ -517,79 +522,23 @@ class ServeDetector:
                     segment_result["num_frames"] = len(frames_with_timestamps) if frames_with_timestamps else 0
 
                 batch_results.append(segment_result)
-            
+
             # 处理无法提取帧的片段
             for segment in segments_batch:
                 if segment not in valid_segments:
                     batch_results.append({
                         **segment,
-                        "has_serve": False,
-                        "serve_response": "无法提取帧",
+                        "action_type": action_type,
+                        "has_action": False,
+                        "action_response": "无法提取帧",
                         "success": False
                     })
-            
+
             return batch_results
 
         except Exception as e:
-            logger.error(f"批量发球检测失败: {str(e)}")
+            logger.error(f"批量动作检测失败: {str(e)}")
             raise e
-
-    def _create_messages_with_video_url(
-        self,
-        video_url: str,
-        text: str,
-        system_prompt: Optional[str] = None,
-        segment: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
-        """
-        Create messages with video URL for DashScope API.
-
-        Args:
-            video_url: URL of the video (S3 or other public URL)
-            text: Query text
-            system_prompt: Optional system prompt
-            segment: Optional segment information (for time-based queries)
-
-        Returns:
-            List of message dictionaries
-        """
-        messages = []
-
-        # Add system prompt if provided
-        if system_prompt:
-            messages.append({
-                "role": "system",
-                "content": [{"type": "text", "text": system_prompt}]
-            })
-
-        # Build user message with video URL
-        user_content = [
-            {
-                "type": "video_url",
-                "video_url": {"url": video_url}
-            }
-        ]
-
-        # Add time range information if segment is provided
-        if segment:
-            time_info = f" (时间段: {segment['start_time']:.1f}s - {segment['end_time']:.1f}s)"
-            user_content.append({
-                "type": "text",
-                "text": text + time_info
-            })
-        else:
-            user_content.append({
-                "type": "text",
-                "text": text
-            })
-
-        messages.append({
-            "role": "user",
-            "content": user_content
-        })
-
-        logger.info(f"Created messages with video URL: {video_url}")
-        return messages
 
     def _generate_batch(self, messages_batch: List[List[Dict]], request_id: str = None, debug_mode: bool = False) -> List[str]:
         """
@@ -628,7 +577,6 @@ class ServeDetector:
             responses = []
             for messages in messages_batch:
                 response = MultiModalConversation.call(
-                    # 若没有配置环境变量，请用百炼API Key将下行替换为：api_key="sk-xxx"
                     api_key=os.getenv('DASHSCOPE_API_KEY'),
                     model='qwen3-vl-flash',
                     messages=messages)
@@ -662,15 +610,15 @@ class ServeDetector:
                 os.makedirs(debug_dir, exist_ok=True)
 
             responses = []
- 
+
             for batch_index, conversation in enumerate(messages_batch):
                 if not conversation:
                     responses.append("输入为空")
                     continue
-                
+
                 transformed_conversation = []
                 image_index = 0
-                
+
                 for msg in conversation:
                     transformed_msg = {"role": msg["role"], "content": []}
                     frame_list = []
@@ -682,13 +630,11 @@ class ServeDetector:
                                 "text": item["text"]
                             })
                         elif item["type"] == "image":
-                            # image_b64 = self._encode_image(item["image"])
                             image_local_path = item["image"].split("file://")[1]
                             image_url = self.s3_uploader.upload_video(image_local_path, expiration=3600)
                             frame_list.append({"image": image_url, "timestamp": item["timestamp"]})
                             image_index += 1
                             if debug_mode:
-                                # Create subdirectory for each batch: request_id/batch_xxx/
                                 debug_sub_dir = os.path.join(debug_dir, f"batch_{batch_index:03d}")
                                 os.makedirs(debug_sub_dir, exist_ok=True)
                                 item["image"].save(os.path.join(debug_sub_dir, f"image_{image_index:03d}.png"))
@@ -730,7 +676,7 @@ class ServeDetector:
                         },
                         json=payload
                     )
-                    
+
                     if response.status_code == 200:
                         result = response.json()
                         if result.get('choices') and len(result['choices']) > 0:
@@ -743,17 +689,16 @@ class ServeDetector:
                     else:
                         logger.error(f"API调用失败: {response.status_code} - {response.text}")
                         responses.append(f"API调用失败: {response.status_code}")
-                        
+
                 except requests.exceptions.Timeout:
                     logger.error("API调用超时")
                     responses.append("请求超时")
                 except Exception as api_e:
                     logger.error(f"API调用异常: {str(api_e)}")
                     responses.append(f"API调用异常: {str(api_e)}")
-            
+
             return responses
-            
+
         except Exception as e:
             logger.error(f"批量生成失败: {str(e)}")
             raise e
-

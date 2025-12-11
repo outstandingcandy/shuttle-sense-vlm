@@ -112,7 +112,8 @@ def main():
 
     try:
         analyzer = BadmintonAnalyzer(
-            debug=args.debug
+            debug=args.debug,
+            config_path=args.config_path
         )
 
         result = analyzer.detect_serves(video_path=args.video)

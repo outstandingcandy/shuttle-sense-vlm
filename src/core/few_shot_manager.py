@@ -10,7 +10,7 @@ import uuid
 import re
 import shutil
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from PIL import Image
 from utils.video_processor import extract_frames_from_video
 
@@ -92,7 +92,9 @@ class MessageManager:
         Returns:
             List of extracted frames
         """
-        frames = extract_frames_from_video(video_path, num_frames, start_time, duration, frame_size)
+        frames_with_timestamps = extract_frames_from_video(video_path, num_frames, start_time, duration, frame_size)
+        # Unpack tuples to get just the frames
+        frames = [frame for frame, _ in frames_with_timestamps]
         self._save_example_frames(frames, example_id, video_path, query, expected_response)
         logger.info(f"Extracted {len(frames)} frames from {video_path} as example ID {example_id}")
         return frames
@@ -287,7 +289,7 @@ class MessageManager:
         return '_'.join(parts)
 
     def create_messages(self,
-                       frames: Optional[List[Image.Image]] = None,
+                       frames_with_timestamps: Optional[List[Tuple[Image.Image, float]]] = None,
                        text: str = "",
                        system_prompt: Optional[str] = None,
                        session_id: Optional[str] = None,
@@ -304,7 +306,7 @@ class MessageManager:
         When no examples are provided, creates zero-shot messages.
 
         Args:
-            frames: Query frames to analyze (for frame mode)
+            frames_with_timestamps: Query frames with timestamps to analyze (for frame mode)
             text: Query text/question
             system_prompt: Optional system prompt
             session_id: Optional session ID (auto-generated if not provided)
@@ -322,7 +324,7 @@ class MessageManager:
         Examples:
             # Zero-shot usage with frames
             messages = manager.create_messages(
-                frames=video_frames,
+                frames_with_timestamps=video_frames_with_timestamps,
                 text="Is there a serve in this video?"
             )
 
@@ -334,13 +336,13 @@ class MessageManager:
 
             # Few-shot usage with frames
             messages = manager.create_messages(
-                frames=video_frames,
+                frames_with_timestamps=video_frames_with_timestamps,
                 text="Is there a serve in this video?",
                 example_ids=[1, 2, 3, 4, 5]
             )
         """
         # Validate input: must provide either frames or video_url
-        if frames is None and video_url is None:
+        if frames_with_timestamps is None and video_url is None:
             raise ValueError("Must provide either 'frames' or 'video_url'")
 
         # Generate session ID if not provided
@@ -407,9 +409,11 @@ class MessageManager:
             query_content.append({"type": "video", "video": video_url})
         else:
             # Frame mode: add all frames to content
-            logger.info(f"Using frame mode with {len(frames)} frames")
-            for image_url in self._save_frames_to_temp(frames, session_dir):
-                query_content.append({"type": "image", "image": image_url})
+            logger.info(f"Using frame mode with {len(frames_with_timestamps)} frames")
+            frames = [frame for frame, _ in frames_with_timestamps]
+            timestamps = [timestamp for _, timestamp in frames_with_timestamps]
+            for image_url, timestamp in zip(self._save_frames_to_temp(frames, session_dir), timestamps):
+                query_content.append({"type": "image", "image": image_url, "timestamp": timestamp})
 
         query_content.append({"type": "text", "text": text})
 
@@ -419,7 +423,7 @@ class MessageManager:
         })
 
         mode = "few-shot" if example_ids else "zero-shot"
-        content_type = "video URL" if video_url else f"{len(frames) if frames else 0} frames"
+        content_type = "video URL" if video_url else f"{len(frames_with_timestamps) if frames_with_timestamps else 0} frames"
         logger.info(f"Created {mode} message with {content_type}")
 
         return messages

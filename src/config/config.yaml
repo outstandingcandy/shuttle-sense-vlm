@@ -55,8 +55,8 @@ active_model: "qwen3-vl-32b-local"
 # S3 Configuration (for video uploads)
 # ============================================================================
 s3:
-  enabled: false  # Enable S3 video upload feature
-  bucket_name: ""  # S3 bucket name (or set S3_BUCKET_NAME env var)
+  enabled: true # Enable S3 video upload feature
+  bucket_name: "gmis-test-1"  # S3 bucket name (or set S3_BUCKET_NAME env var)
   region: "us-west-2"  # AWS region (or set AWS_REGION env var)
   prefix: "videos/"  # Prefix for uploaded videos
   auto_upload: false  # Automatically upload local videos to S3 before processing
@@ -67,23 +67,23 @@ s3:
 # Video Processing Configuration
 # ============================================================================
 video_frames:
-  max_frames: 8  # Maximum number of frames to extract per video segment
+  max_frames: 16  # Maximum number of frames to extract per video segment
   frame_size: [1536, 1536]  # Frame size [width, height]
   mode: "frame"  # Processing mode: "frame" (extract frames) or "video" (use video URLs)
   video_fps: 8  # FPS when creating videos from frames (for video mode)
   video_temp_dir: "temp_videos"  # Temporary directory for created videos
 
 video_segmentation:
-  segment_duration: 2.0  # Duration of each video segment in seconds
-  overlap_duration: 1.0  # Overlap between consecutive segments in seconds
+  segment_duration: 5.0  # Duration of each video segment in seconds
+  overlap_duration: 2.0  # Overlap between consecutive segments in seconds
   max_segments: null     # Maximum number of segments to process (null = process all segments)
 
 # ============================================================================
 # Inference Parameters
 # ============================================================================
 inference:
-  batch_size: 4  # Number of segments to process in parallel
-  max_new_tokens: 50  # Maximum number of tokens to generate
+  batch_size: 1  # Number of segments to process in parallel
+  max_new_tokens: 500  # Maximum number of tokens to generate
   temperature: 0.1  # Temperature for sampling (lower = more deterministic)
   top_p: 0.8  # Top-p sampling parameter
   do_sample: false  # Whether to use sampling
@@ -128,6 +128,18 @@ prompts:
     count_players: "这段视频中有多少名羽毛球选手？"
     court_position: "描述羽毛球选手在场地上的位置：前场、中场、后场"
 
+  # Football detection prompts
+  football:
+    has_goal: "这段足球视频中是否包含进球？如果包含请给出进球所在的时间区间，输出格式为：{\"action_type\": \"goal\", \"start_time\": {start_time}, \"end_time\": {end_time}}，如果不包含请回答没有进球，输出格式为：{\"action_type\": \"no_goal\"}，不要输出任何其他内容。"
+    has_shot: "这段足球视频中是否包含射门动作？如果包含请给出射门所在的时间区间，输出格式为：{\"action_type\": \"shot\", \"start_time\": {start_time}, \"end_time\": {end_time}}，如果不包含请回答没有射门，输出格式为：{\"action_type\": \"no_shot\"}，不要输出任何其他内容。"
+    has_pass: "这段足球视频中是否包含传球动作？如果包含请给出传球所在的时间区间，输出格式为：{\"action_type\": \"pass\", \"start_time\": {start_time}, \"end_time\": {end_time}}，如果不包含请回答没有传球，输出格式为：{\"action_type\": \"no_pass\"}，不要输出任何其他内容。"
+    has_tackle: "这段足球视频中是否包含铲球动作？如果包含请给出铲球所在的时间区间，输出格式为：{\"action_type\": \"tackle\", \"start_time\": {start_time}, \"end_time\": {end_time}}，如果不包含请回答没有铲球，输出格式为：{\"action_type\": \"no_tackle\"}，不要输出任何其他内容。"
+    has_dribble: "这段足球视频中是否包含带球动作？如果包含请给出带球所在的时间区间，输出格式为：{\"action_type\": \"dribble\", \"start_time\": {start_time}, \"end_time\": {end_time}}，如果不包含请回答没有带球，输出格式为：{\"action_type\": \"no_dribble\"}，不要输出任何其他内容。"
+    has_action: "这段足球视频中是否有活跃的比赛动作？请回答：有动作 或 无动作"
+    action_type: "描述这段足球视频中的主要动作类型：进球、射门、传球、铲球、带球或其他"
+    player_count: "这段视频中有多少名球员？"
+    ball_possession: "哪支球队控制着球？红队、蓝队或无法判断"
+
   # Prompt templates for dynamic generation
   templates:
     yes_no_question: "这段羽毛球视频中是否{action}？请回答：{yes_answer} 或 {no_answer}"
@@ -156,9 +168,9 @@ system_prompts:
     - 对手臂的要求
       - 手臂不能把击球点抬到腰以上：
         - 因为球被击中时必须在腰部以下。
-      - 手臂和手腕的姿势必须保证 “拍头低于持拍手”：
-        - 任何导致“拍头高于持拍手”的手臂抬高与甩动，都是潜在违例风险。
-      - 手臂挥动方向必须包含明显的“由下向上成分”：
+      - 手臂和手腕的姿势必须保证 "拍头低于持拍手"：
+        - 任何导致"拍头高于持拍手"的手臂抬高与甩动，都是潜在违例风险。
+      - 手臂挥动方向必须包含明显的"由下向上成分"：
         - 不能做近似水平或向下砍的击球动作。
       - 手臂的挥动必须一气呵成，不得中途停顿或假动作：
         - 手臂前送一旦开始，中间不能再停顿再发力。
@@ -172,6 +184,64 @@ system_prompts:
     - 请严格按照发球定义和关键特征进行分析，不要进行任何主观判断
     - 输入的图像为视频帧，每秒4帧，请根据视频帧分析发球动作
     - 请仔细思考后给出答案，不要轻易给出答案
+
+  football_detection: |
+    你是一名专业的足球动作识别专家。
+    你的任务是分析足球视频片段，判断其中是否包含特定的足球动作。
+
+    【进球定义】
+    进球是指球完全越过球门线，进入球门框内，且在此之前没有违反竞赛规则的有效得分。
+
+    【关键特征】
+    - 球的运动：球必须完全穿过球门线，整个球体越过门线
+    - 球门框架：球必须在球门框（横梁和立柱）的范围内
+    - 守门员：可能有守门员试图扑救但未能阻止
+    - 庆祝：通常伴随着进球球员和队友的庆祝动作
+    - 回放：可能会有慢动作回放或特写镜头
+
+    【射门定义】
+    射门是指球员尝试将球踢向对方球门的动作，目的是得分。
+
+    【射门特征】
+    - 脚部动作：球员用脚触球，力量较大
+    - 球的方向：球朝向对方球门
+    - 射门类型：可能是远射、近射、头球、凌空抽射等
+    - 结果：可能进球、被扑出、击中门柱或射偏
+
+    【传球定义】
+    传球是指球员将球踢给队友的动作，目的是推进进攻或保持控球。
+
+    【传球特征】
+    - 脚部动作：球员用脚触球，力量适中
+    - 球的方向：球朝向队友
+    - 传球类型：可能是短传、长传、直塞、传中等
+    - 接球：通常有队友接应
+
+    【铲球定义】
+    铲球是指防守球员用脚部滑铲的方式尝试从对方球员脚下夺球或破坏进攻的动作。
+
+    【铲球特征】
+    - 身体动作：球员身体向前滑动，脚部伸向球
+    - 目的：夺球或破坏进攻
+    - 类型：可能是正面铲球、侧面铲球或从后铲球
+    - 结果：可能成功断球、犯规或未触及球
+
+    【带球定义】
+    带球是指球员在移动过程中用脚控制球，保持球在自己控制范围内的动作。
+
+    【带球特征】
+    - 脚部动作：球员用脚连续触球，保持控制
+    - 移动：球员向前、侧面或后退移动
+    - 类型：可能是直线带球、变向、过人等
+    - 目的：推进进攻、摆脱防守或创造机会
+
+    【分析要求】
+    - 仔细观察视频中的每一帧
+    - 识别球员的动作、球的运动轨迹和比赛情况
+    - 基于典型特征做出准确判断
+    - 请严格按照定义和关键特征进行分析，不要进行主观臆断
+    - 输入的图像为视频帧，请根据视频帧时序分析足球动作
+    - 请仔细思考后给出答案，确保判断准确
 
 # ============================================================================
 # Annotations Configuration

@@ -20,7 +20,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
     --host $HOST \
     --port $PORT \
     --max-model-len 128000 \
-    --gpu-memory-utilization 0.96
+    --gpu-memory-utilization 0.96 \
+    --media-io-kwargs '{"video": {"num_frames": -1}}' \
+    --enable-log-requests \
+    --uvicorn-log-level debug
 
 echo "✅ vLLM服务器已启动在 http://$HOST:$PORT"
 echo "💡 测试命令:"

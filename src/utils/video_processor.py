@@ -69,7 +69,7 @@ def extract_frames_from_video(
     start_time: float = 0,
     duration: Optional[float] = None,
     frame_size: Union[Tuple[int, int], List[int]] = (1024, 1024)
-) -> List[Image.Image]:
+) -> List[Tuple[Image.Image, float]]:
     """
     Extract specified number of frames from video.
 
@@ -86,7 +86,7 @@ def extract_frames_from_video(
                    aspect ratio, with black padding added to fill remaining space.
 
     Returns:
-        List of PIL Image objects with preserved aspect ratio and padding
+        List of tuples containing (PIL Image, timestamp in seconds)
 
     Raises:
         ValueError: If video cannot be opened or parameters are invalid
@@ -144,12 +144,15 @@ def extract_frames_from_video(
             ret, frame = cap.read()
 
             if ret:
+                # Calculate timestamp for this frame
+                timestamp = (idx - start_frame) / fps
+
                 # Convert BGR to RGB
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 # Resize frame with padding to preserve aspect ratio
                 frame = resize_with_padding(frame, frame_size_tuple)
-                # Convert to PIL Image
-                frames.append(Image.fromarray(frame))
+                # Convert to PIL Image and append with timestamp
+                frames.append((Image.fromarray(frame), timestamp))
             else:
                 logger.warning(f"Cannot read frame {idx}")
 
